@@ -376,11 +376,10 @@ class AnalysisService:
         if result is None:
             return None
         sections = [
-            result.debt_discussion,
-            result.management_guidance,
-            result.margin_outlook,
-            result.order_book,
             result.expansion_plans,
+            result.order_book,
+            result.margin_outlook,
+            result.debt_discussion,
             result.risks,
             result.management_guidance,
         ]
