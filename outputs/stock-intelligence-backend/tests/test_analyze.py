@@ -117,17 +117,39 @@ class StubStockDataProvider:
 
 class StubNewsCollector(NewsCollector):
     def collect(self, stock_name: str, limit: int = 20) -> list[NewsArticle]:
+        if stock_name.startswith("POSNEWS"):
+            headlines = [
+                "strong revenue growth and market share gains",
+                "bullish order inflow with margin improvement",
+                "capacity expansion supports positive guidance",
+                "debt free balance sheet and strong demand",
+            ]
+        elif stock_name.startswith("NEGNEWS"):
+            headlines = [
+                "weak demand creates margin pressure",
+                "guidance cut after order slowdown",
+                "high debt and cost pressure risks",
+                "profit decline amid uncertainty",
+            ]
+        else:
+            headlines = ["strong growth", "margin pressure"]
         return [
-            NewsArticle(title=f"{stock_name} strong growth", url=f"local://{stock_name}/1", source="test", published_at=None),
-            NewsArticle(title=f"{stock_name} margin pressure", url=f"local://{stock_name}/2", source="test", published_at=None),
+            NewsArticle(
+                title=f"{stock_name} {headline}",
+                url=f"local://{stock_name}/{index}",
+                source="test",
+                published_at=None,
+            )
+            for index, headline in enumerate(headlines, start=1)
         ]
 
 
 class StubNewsClassifier:
     def classify(self, text: str) -> tuple[SentimentLabel, float]:
-        if "strong" in text:
+        normalized = text.lower()
+        if any(term in normalized for term in ["strong", "bullish", "positive", "expansion", "debt free", "market share"]):
             return SentimentLabel.POSITIVE, 0.9
-        if "pressure" in text:
+        if any(term in normalized for term in ["pressure", "weak", "cut", "high debt", "decline", "slowdown", "uncertainty"]):
             return SentimentLabel.NEGATIVE, 0.8
         return SentimentLabel.NEUTRAL, 0.7
 
@@ -192,7 +214,11 @@ def test_analyze_fetches_missing_nse_stock_and_returns_score() -> None:
     assert payload["risk_flags"]
     assert payload["news_sentiment"]["article_count"] == 2
     assert payload["news_sentiment"]["articles"]
-    assert "signals" in payload["concall_summary"]
+    assert payload["news_score"] > 0
+    assert payload["news_reasoning"]
+    assert payload["concall_score"] == 50
+    assert payload["concall_reasoning"]
+    assert {item["category"] for item in payload["score_breakdown"]} >= {"news_sentiment", "concall_intelligence"}
 
 
 def test_analyze_reuses_cached_stock_data() -> None:
@@ -225,3 +251,84 @@ def test_analyze_partial_market_data_for_valid_nse_symbols(symbol: str, expected
     assert payload["shareholding_history"]
     assert payload["risk_flags"]
     assert expected_missing_flag in {item["label"] for item in payload["risk_flags"]}
+
+
+def test_positive_news_increases_final_score() -> None:
+    positive_response = client.post("/analyze", json={"stock": "POSNEWS"})
+    negative_response = client.post("/analyze", json={"stock": "NEGNEWS"})
+
+    assert positive_response.status_code == 200
+    assert negative_response.status_code == 200
+    positive_payload = positive_response.json()
+    negative_payload = negative_response.json()
+    assert positive_payload["news_score"] >= 80
+    assert negative_payload["news_score"] <= 30
+    assert positive_payload["news_score"] > negative_payload["news_score"]
+    assert positive_payload["score"] > negative_payload["score"]
+    assert "News recommendation" in positive_payload["news_reasoning"]
+
+
+def test_negative_news_lowers_final_score() -> None:
+    mixed_response = client.post("/analyze", json={"stock": "MIXNEWS"})
+    negative_response = client.post("/analyze", json={"stock": "NEGNEWS2"})
+
+    assert mixed_response.status_code == 200
+    assert negative_response.status_code == 200
+    mixed_payload = mixed_response.json()
+    negative_payload = negative_response.json()
+    assert negative_payload["news_score"] < mixed_payload["news_score"]
+    assert negative_payload["score"] < mixed_payload["score"]
+
+
+def test_bullish_concall_increases_final_score() -> None:
+    bullish_transcript = (
+        "Management tone is bullish and debt free with strong demand. "
+        "Revenue growth guidance is positive and management expects market share gains. "
+        "Margin improvement and operating leverage should continue. "
+        "Order book and orders grew with a strong pipeline. "
+        "Capacity expansion and capex plans support growth. "
+    )
+    bearish_transcript = (
+        "Management tone reflects high debt and working capital risk. "
+        "Revenue outlook faces weak demand and guidance cut. "
+        "Margin pressure and cost pressure are severe. "
+        "Order book declined after order slowdown and delays. "
+        "Capex has uncertainty and risk warnings increased. "
+    )
+    bullish_response = client.post("/analyze", json={"stock": "BULLCONCALL", "concall_transcript": bullish_transcript})
+    bearish_response = client.post("/analyze", json={"stock": "BEARCONCALL", "concall_transcript": bearish_transcript})
+
+    assert bullish_response.status_code == 200
+    assert bearish_response.status_code == 200
+    bullish_payload = bullish_response.json()
+    bearish_payload = bearish_response.json()
+    assert bullish_payload["concall_score"] >= 80
+    assert bearish_payload["concall_score"] <= 30
+    assert bullish_payload["concall_score"] > bearish_payload["concall_score"]
+    assert bullish_payload["score"] > bearish_payload["score"]
+    assert "Concall recommendation" in bullish_payload["concall_reasoning"]
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+
+def test_bearish_concall_lowers_final_score() -> None:
+    neutral_response = client.post("/analyze", json={"stock": "NEUTRALCONCALL"})
+    bearish_response = client.post(
+        "/analyze",
+        json={
+            "stock": "BEARCONCALL2",
+            "concall_transcript": (
+                "Management discussed high debt and risk. "
+                "Revenue outlook has weak demand and guidance cut. "
+                "Margin pressure and cost pressure persist. "
+                "Order book decline and delays create uncertainty. "
+            ),
+        },
+    )
+
+    assert neutral_response.status_code == 200
+    assert bearish_response.status_code == 200
+    neutral_payload = neutral_response.json()
+    bearish_payload = bearish_response.json()
+    assert bearish_payload["concall_score"] < neutral_payload["concall_score"]
+    assert bearish_payload["score"] < neutral_payload["score"]

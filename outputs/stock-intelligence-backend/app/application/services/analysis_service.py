@@ -25,7 +25,7 @@ from app.domain.analyzers.valuation_analyzer import ValuationAnalyzer
 from app.application.services.concall_transcript_service import ConcallTranscriptService
 from app.application.services.news_sentiment_service import NewsSentimentService
 from app.domain.concall_transcript import ConcallStance, ConcallTranscriptAnalysis
-from app.domain.entities import ConcallSignals, FinancialMetrics, NewsSentiment, ShareholdingPattern, ValuationMetrics
+from app.domain.entities import CategoryScore, ConcallSignals, FinancialMetrics, NewsSentiment, ShareholdingPattern, ValuationMetrics
 from app.domain.news_sentiment import NewsSentimentResult
 from app.domain.recommendation_engine import RecommendationEngine
 from app.infrastructure.market_data.stock_data_provider import StockDataProvider
@@ -105,8 +105,6 @@ class AnalysisService:
             self.growth_analyzer.analyze(financial_history),
             self.valuation_analyzer.analyze(valuation, financial_history),
             self.ownership_analyzer.analyze(shareholding_history),
-            self.news_sentiment_analyzer.analyze(sentiment=self._news_domain(news_result)),
-            self.concall_analyzer.analyze(signals=self._concall_signals(concall_result)),
             self.risk_analyzer.analyze(
                 financials=financials,
                 previous_financials=financial_history[-2]
@@ -114,10 +112,14 @@ class AnalysisService:
                 else None,
                 shareholding=shareholding,
             ),
+            self.news_sentiment_analyzer.analyze(sentiment=self._news_domain(news_result)),
+            self.concall_analyzer.analyze(signals=self._concall_signals(concall_result)),
         ]
 
         result = self.recommendation_engine.recommend(category_scores)
         self.analysis_repository.save_result(stock_id=stock.id, result=result)
+        news_category = self._category_score(result.breakdown, "news_sentiment")
+        concall_category = self._category_score(result.breakdown, "concall_intelligence")
 
         return AnalyzeResponse(
             symbol=stock.symbol,
@@ -138,7 +140,11 @@ class AnalysisService:
                 shareholding_history=shareholding_history,
             ),
             news_sentiment=self._news_sentiment(news_result),
+            news_score=news_category.score,
+            news_reasoning=news_category.reasoning,
             concall_summary=self._concall_summary(concall_result),
+            concall_score=concall_category.score,
+            concall_reasoning=concall_category.reasoning,
             score_breakdown=[
                 ScoreBreakdownItem(
                     category=item.category,
@@ -150,6 +156,13 @@ class AnalysisService:
                 for item in result.breakdown
             ],
         )
+
+    @staticmethod
+    def _category_score(scores: list[CategoryScore], category: str) -> CategoryScore:
+        for item in scores:
+            if item.category == category:
+                return item
+        raise ValueError(f"Missing score category: {category}")
 
     @staticmethod
     def _default_financials() -> FinancialMetrics:
@@ -341,11 +354,21 @@ class AnalysisService:
 
     @staticmethod
     def _news_domain(result: NewsSentimentResult) -> NewsSentiment:
+        article_count = len(result.articles)
+        average_confidence = (
+            sum(item.confidence for item in result.articles) / article_count
+            if article_count
+            else 0
+        )
         return NewsSentiment(
             positive_count=sum(1 for item in result.articles if item.label.value == "Positive"),
             neutral_count=sum(1 for item in result.articles if item.label.value == "Neutral"),
             negative_count=sum(1 for item in result.articles if item.label.value == "Negative"),
             average_sentiment_score=(result.sentiment_score / 50) - 1,
+            positive_percent=result.positive,
+            neutral_percent=result.neutral,
+            negative_percent=result.negative,
+            average_confidence=average_confidence,
         )
 
     @staticmethod
@@ -368,6 +391,14 @@ class AnalysisService:
             has_order_book_growth=result.order_book.sentiment == ConcallStance.BULLISH,
             has_margin_guidance=bool(result.margin_outlook.evidence),
             has_debt_concern=result.debt_discussion.sentiment == ConcallStance.BEARISH,
+            management_tone=result.debt_discussion.sentiment.value,
+            revenue_outlook=result.management_guidance.sentiment.value,
+            margin_outlook=result.margin_outlook.sentiment.value,
+            order_book_commentary=result.order_book.sentiment.value,
+            capex_plans=result.expansion_plans.sentiment.value,
+            risks_mentioned=result.risks.sentiment.value,
+            guidance_changes=result.management_guidance.sentiment.value,
+            confidence=result.confidence,
         )
 
     @staticmethod

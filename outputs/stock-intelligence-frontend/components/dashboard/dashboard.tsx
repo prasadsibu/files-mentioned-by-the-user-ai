@@ -485,7 +485,7 @@ function NewsPanel({ sentiment, newsItems }: { sentiment: AnalyzeResponse["news_
           News Analysis
         </CardTitle>
         <CardDescription>
-          {sentiment ? `Sentiment score ${sentiment.sentiment_score}/100 · +${sentiment.positive}% / ${sentiment.neutral}% / -${sentiment.negative}%` : "Awaiting API sentiment payload."}
+          {sentiment ? `Sentiment score ${sentiment.sentiment_score}/100 · ${sentiment.article_count} articles · +${sentiment.positive}% / ${sentiment.neutral}% / -${sentiment.negative}%` : "Awaiting API sentiment payload."}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
