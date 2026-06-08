@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import date
 import logging
 
@@ -34,6 +35,15 @@ from app.infrastructure.repositories.stock_repository import StockRepository, St
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ConcallAnalysisContext:
+    analysis: ConcallTranscriptAnalysis | None
+    transcript_found: bool
+    transcript_source: str | None
+    transcript_date: date | None
+    discovery_method: str | None
 
 
 class AnalysisService:
@@ -98,7 +108,7 @@ class AnalysisService:
         shareholding_history = snapshots.shareholding_history or [shareholding]
 
         news_result = self._analyze_news_sentiment(stock.symbol)
-        concall_result = self._analyze_concall(request)
+        concall_context = self._analyze_concall(request, stock.id, stock.symbol, stock.name)
 
         category_scores = [
             self.financial_analyzer.analyze(financials),
@@ -113,7 +123,7 @@ class AnalysisService:
                 shareholding=shareholding,
             ),
             self.news_sentiment_analyzer.analyze(sentiment=self._news_domain(news_result)),
-            self.concall_analyzer.analyze(signals=self._concall_signals(concall_result)),
+            self.concall_analyzer.analyze(signals=self._concall_signals(concall_context.analysis)),
         ]
 
         result = self.recommendation_engine.recommend(category_scores)
@@ -142,9 +152,12 @@ class AnalysisService:
             news_sentiment=self._news_sentiment(news_result),
             news_score=news_category.score,
             news_reasoning=news_category.reasoning,
-            concall_summary=self._concall_summary(concall_result),
+            concall_summary=self._concall_summary(concall_context.analysis),
             concall_score=concall_category.score,
             concall_reasoning=concall_category.reasoning,
+            transcript_found=concall_context.transcript_found,
+            transcript_source=concall_context.transcript_source,
+            transcript_date=concall_context.transcript_date.isoformat() if concall_context.transcript_date else None,
             score_breakdown=[
                 ScoreBreakdownItem(
                     category=item.category,
@@ -340,17 +353,89 @@ class AnalysisService:
                 articles=[],
             )
 
-    def _analyze_concall(self, request: AnalyzeRequest) -> ConcallTranscriptAnalysis | None:
-        if not request.concall_transcript and not request.concall_transcript_url:
-            return None
+    def _analyze_concall(
+        self,
+        request: AnalyzeRequest,
+        stock_id: int,
+        symbol: str,
+        company_name: str | None,
+    ) -> ConcallAnalysisContext:
+        if request.concall_transcript or request.concall_transcript_url:
+            try:
+                logger.info(
+                    "concall_transcript_manual_override symbol=%s source=%s",
+                    symbol,
+                    request.concall_transcript_url or "manual_upload",
+                )
+                return ConcallAnalysisContext(
+                    analysis=self.concall_transcript_service.analyze_input(
+                        transcript=request.concall_transcript,
+                        transcript_url=request.concall_transcript_url,
+                    ),
+                    transcript_found=True,
+                    transcript_source=request.concall_transcript_url or "manual_upload",
+                    transcript_date=None,
+                    discovery_method="manual",
+                )
+            except Exception as exc:
+                logger.warning("concall_analysis_failed symbol=%s source=manual error=%s", request.stock, exc)
+                return ConcallAnalysisContext(None, False, None, None, None)
+
+        cached = self.stock_repository.get_cached_transcript(stock_id)
+        if cached is not None:
+            logger.info(
+                "concall_transcript_cache_hit symbol=%s source=%s method=%s",
+                symbol,
+                cached.source_url,
+                cached.discovery_method,
+            )
+            try:
+                return ConcallAnalysisContext(
+                    analysis=self.concall_transcript_service.analyze(cached.transcript_text),
+                    transcript_found=True,
+                    transcript_source=cached.source_url,
+                    transcript_date=cached.transcript_date,
+                    discovery_method=cached.discovery_method,
+                )
+            except Exception as exc:
+                logger.warning("concall_cached_analysis_failed symbol=%s error=%s", symbol, exc)
+
+        logger.info("concall_transcript_cache_miss symbol=%s", symbol)
         try:
-            return self.concall_transcript_service.analyze_input(
-                transcript=request.concall_transcript,
-                transcript_url=request.concall_transcript_url,
+            discovered = self.concall_transcript_service.discover_transcript(symbol=symbol, company_name=company_name)
+        except Exception as exc:
+            logger.warning("concall_transcript_discovery_failed symbol=%s error=%s", symbol, exc)
+            discovered = None
+
+        if discovered is None:
+            logger.info("concall_transcript_unavailable symbol=%s", symbol)
+            return ConcallAnalysisContext(None, False, None, None, None)
+
+        logger.info(
+            "concall_transcript_retrieved symbol=%s source=%s method=%s chars=%s",
+            symbol,
+            discovered.source_url,
+            discovered.discovery_method,
+            len(discovered.transcript_text),
+        )
+        self.stock_repository.save_transcript_cache(
+            stock_id=stock_id,
+            source_url=discovered.source_url,
+            transcript_text=discovered.transcript_text,
+            transcript_date=discovered.transcript_date,
+            discovery_method=discovered.discovery_method,
+        )
+        try:
+            return ConcallAnalysisContext(
+                analysis=self.concall_transcript_service.analyze(discovered.transcript_text),
+                transcript_found=True,
+                transcript_source=discovered.source_url,
+                transcript_date=discovered.transcript_date,
+                discovery_method=discovered.discovery_method,
             )
         except Exception as exc:
-            logger.warning("concall_analysis_failed symbol=%s error=%s", request.stock, exc)
-            return None
+            logger.warning("concall_analysis_failed symbol=%s source=%s error=%s", symbol, discovered.source_url, exc)
+            return ConcallAnalysisContext(None, False, discovered.source_url, discovered.transcript_date, discovered.discovery_method)
 
     @staticmethod
     def _news_domain(result: NewsSentimentResult) -> NewsSentiment:
@@ -376,10 +461,11 @@ class AnalysisService:
         if result is None:
             return None
         sections = [
-            result.expansion_plans,
-            result.order_book,
-            result.margin_outlook,
             result.debt_discussion,
+            result.management_guidance,
+            result.margin_outlook,
+            result.order_book,
+            result.expansion_plans,
             result.risks,
             result.management_guidance,
         ]
@@ -427,9 +513,9 @@ class AnalysisService:
     def _concall_summary(result: ConcallTranscriptAnalysis | None) -> ConcallSummaryResponse:
         if result is None:
             return ConcallSummaryResponse(
-                final_view="Not Submitted",
+                final_view="Unavailable",
                 confidence=0,
-                reasoning="Upload transcript text or provide a transcript URL to generate concall intelligence.",
+                reasoning="Latest earnings call transcript unavailable.",
                 signals=[],
             )
         sections = [

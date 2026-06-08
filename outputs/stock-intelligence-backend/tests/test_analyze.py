@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import date, datetime
+import zlib
 
 from fastapi.testclient import TestClient
 import pytest
@@ -29,6 +30,7 @@ from app.infrastructure.market_data.stock_data_provider import (
 )
 from app.infrastructure.news.news_collector import NewsCollector
 from app.infrastructure.repositories.analysis_repository import AnalysisRepository
+from app.infrastructure.transcripts.transcript_discovery import DiscoveredTranscript, TranscriptDiscoveryService
 from app.infrastructure.repositories.stock_repository import StockRepository
 from app.main import app
 
@@ -161,6 +163,49 @@ class StubConcallClient:
         return RuleBasedConcallTranscriptAnalyzer().analyze(transcript)
 
 
+class StubTranscriptDiscoveryService:
+    def __init__(self) -> None:
+        self.calls: dict[str, int] = {}
+
+    def discover(self, symbol: str, company_name: str | None = None) -> DiscoveredTranscript | None:
+        self.calls[symbol] = self.calls.get(symbol, 0) + 1
+        bullish_transcript = (
+            "Latest conference call transcript. Management tone is bullish and debt free with strong demand. "
+            "Revenue growth guidance is positive and management expects market share gains. "
+            "Margin improvement and operating leverage should continue. "
+            "Order book and orders grew with a strong pipeline. "
+            "Capacity expansion and capex plans support growth. "
+        )
+        if symbol in {"AUTOCONCALL", "CACHECONCALL"}:
+            return DiscoveredTranscript(
+                source_url=f"https://ir.example.com/{symbol.lower()}-transcript.pdf",
+                transcript_text=bullish_transcript,
+                transcript_date=date(2026, 1, 30),
+                discovery_method="company_ir",
+            )
+        if symbol == "PDFCONCALL":
+            pdf_payload = make_simple_pdf(
+                "PDF conference call transcript. Management tone is bullish. Revenue growth guidance is positive. "
+                "Margin improvement continues and order book is strong. Capacity expansion supports growth."
+            )
+            return DiscoveredTranscript(
+                source_url="https://ir.example.com/pdfconcall.pdf",
+                transcript_text=TranscriptDiscoveryService.extract_pdf_text(pdf_payload),
+                transcript_date=date(2026, 2, 15),
+                discovery_method="quarterly_presentation_pdf",
+            )
+        return None
+
+
+transcript_discovery = StubTranscriptDiscoveryService()
+
+
+def make_simple_pdf(text: str) -> bytes:
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("latin-1")
+    compressed = zlib.compress(stream)
+    return b"%PDF-1.4\n1 0 obj << /Length " + str(len(compressed)).encode() + b" /Filter /FlateDecode >> stream\n" + compressed + b"\nendstream endobj\n%%EOF"
+
+
 def build_test_service() -> AnalysisService:
     db = TestingSessionLocal()
     stock_repository = StockRepository(db)
@@ -177,7 +222,10 @@ def build_test_service() -> AnalysisService:
         recommendation_engine=RecommendationEngine(),
         stock_data_provider=StubStockDataProvider(),
         news_sentiment_service=NewsSentimentService(collector=StubNewsCollector(), classifier=StubNewsClassifier()),
-        concall_transcript_service=ConcallTranscriptService(openai_client=StubConcallClient()),
+        concall_transcript_service=ConcallTranscriptService(
+            openai_client=StubConcallClient(),
+            transcript_discovery_service=transcript_discovery,
+        ),
     )
 
 
@@ -218,6 +266,8 @@ def test_analyze_fetches_missing_nse_stock_and_returns_score() -> None:
     assert payload["news_reasoning"]
     assert payload["concall_score"] == 50
     assert payload["concall_reasoning"]
+    assert payload["transcript_found"] is False
+    assert payload["transcript_source"] is None
     assert {item["category"] for item in payload["score_breakdown"]} >= {"news_sentiment", "concall_intelligence"}
 
 
@@ -308,8 +358,6 @@ def test_bullish_concall_increases_final_score() -> None:
     assert bullish_payload["score"] > bearish_payload["score"]
     assert "Concall recommendation" in bullish_payload["concall_reasoning"]
 
-    # assert first_response.status_code == 200
-    # assert second_response.status_code == 200
 
 def test_bearish_concall_lowers_final_score() -> None:
     neutral_response = client.post("/analyze", json={"stock": "NEUTRALCONCALL"})
@@ -332,3 +380,85 @@ def test_bearish_concall_lowers_final_score() -> None:
     bearish_payload = bearish_response.json()
     assert bearish_payload["concall_score"] < neutral_payload["concall_score"]
     assert bearish_payload["score"] < neutral_payload["score"]
+
+
+def test_automatic_transcript_discovered_successfully() -> None:
+    response = client.post("/analyze", json={"stock": "AUTOCONCALL"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["transcript_found"] is True
+    assert payload["transcript_source"] == "https://ir.example.com/autoconcall-transcript.pdf"
+    assert payload["transcript_date"] == "2026-01-30"
+    assert payload["concall_summary"]["signals"]
+    assert payload["concall_score"] >= 80
+
+
+def test_automatic_transcript_cache_reuse() -> None:
+    transcript_discovery.calls.pop("CACHECONCALL", None)
+
+    first_response = client.post("/analyze", json={"stock": "CACHECONCALL"})
+    second_response = client.post("/analyze", json={"stock": "CACHECONCALL"})
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert first_response.json()["transcript_found"] is True
+    assert second_response.json()["transcript_found"] is True
+    assert transcript_discovery.calls["CACHECONCALL"] == 1
+
+
+def test_automatic_transcript_unavailable_fallback() -> None:
+    response = client.post("/analyze", json={"stock": "NOCONCALL"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["transcript_found"] is False
+    assert payload["transcript_source"] is None
+    assert payload["transcript_date"] is None
+    assert payload["concall_summary"]["reasoning"] == "Latest earnings call transcript unavailable."
+    assert payload["concall_score"] == 50
+
+
+def test_manual_transcript_override_skips_auto_discovery() -> None:
+    transcript_discovery.calls.pop("MANUALCONCALL", None)
+    response = client.post(
+        "/analyze",
+        json={
+            "stock": "MANUALCONCALL",
+            "concall_transcript": (
+                "Manual conference call transcript. Management discussed high debt and risk. "
+                "Revenue outlook has weak demand and guidance cut. Margin pressure persists. "
+                "Order book decline and delays create uncertainty."
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["transcript_found"] is True
+    assert payload["transcript_source"] == "manual_upload"
+    assert transcript_discovery.calls.get("MANUALCONCALL", 0) == 0
+    assert payload["concall_score"] < 50
+
+
+def test_pdf_transcript_extraction() -> None:
+    pdf_payload = make_simple_pdf(
+        "PDF conference call transcript with management tone bullish, revenue growth guidance, "
+        "margin improvement, order book strength, capex plans, and risk commentary."
+    )
+
+    extracted = TranscriptDiscoveryService.extract_pdf_text(pdf_payload)
+
+    assert "conference call transcript" in extracted
+    assert "order book" in extracted
+
+
+def test_pdf_transcript_discovered_and_analyzed() -> None:
+    response = client.post("/analyze", json={"stock": "PDFCONCALL"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["transcript_found"] is True
+    assert payload["transcript_source"] == "https://ir.example.com/pdfconcall.pdf"
+    assert payload["transcript_date"] == "2026-02-15"
+    assert payload["concall_score"] >= 80

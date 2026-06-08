@@ -114,6 +114,9 @@ class AnalyzeResponse(BaseModel):
     concall_summary: ConcallSummaryResponse
     concall_score: int
     concall_reasoning: str
+    transcript_found: bool
+    transcript_source: str | None = None
+    transcript_date: str | None = None
     score_breakdown: list[ScoreBreakdownItem]
 
     model_config = ConfigDict(
@@ -140,6 +143,9 @@ class AnalyzeResponse(BaseModel):
                 "concall_summary": {"final_view": "Bullish", "confidence": 82, "reasoning": "Management tone and revenue outlook are constructive.", "signals": []},
                 "concall_score": 85,
                 "concall_reasoning": "Concall recommendation: BUY. Management tone and outlook signals are constructive.",
+                "transcript_found": True,
+                "transcript_source": "https://example.com/tcs-concall-transcript.pdf",
+                "transcript_date": "2026-01-15",
                 "score_breakdown": [],
             }
         }

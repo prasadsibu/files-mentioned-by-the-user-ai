@@ -107,6 +107,9 @@ export type AnalyzeResponse = {
   concall_summary: ConcallSummary;
   concall_score: number;
   concall_reasoning: string;
+  transcript_found: boolean;
+  transcript_source?: string | null;
+  transcript_date?: string | null;
   score_breakdown: ScoreBreakdownItem[];
 };
 

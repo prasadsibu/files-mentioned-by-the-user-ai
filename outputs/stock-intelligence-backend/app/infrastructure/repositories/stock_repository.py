@@ -25,6 +25,15 @@ class HistoricalPricePoint:
 
 
 @dataclass(frozen=True)
+class CachedTranscript:
+    source_url: str
+    transcript_text: str
+    transcript_date: date | None
+    discovery_method: str
+    fetched_at: datetime
+
+
+@dataclass(frozen=True)
 class StockSnapshot:
     financials: FinancialMetrics | None
     financial_history: list[FinancialMetrics]
@@ -59,6 +68,66 @@ class StockRepository:
             .limit(1)
         )
         return bool(cache_row and cache_row.fetched_at >= datetime.utcnow() - self.cache_ttl)
+
+    def get_cached_transcript(self, stock_id: int, ttl: timedelta = timedelta(days=30)) -> CachedTranscript | None:
+        cache_row = self.db.scalar(
+            select(StockDataCacheModel)
+            .where(StockDataCacheModel.stock_id == stock_id, StockDataCacheModel.source == "concall_transcript")
+            .order_by(StockDataCacheModel.fetched_at.desc())
+            .limit(1)
+        )
+        if cache_row is None or cache_row.fetched_at < datetime.utcnow() - ttl:
+            return None
+        try:
+            payload = json.loads(cache_row.payload_json)
+        except json.JSONDecodeError:
+            return None
+        transcript_text = str(payload.get("transcript_text") or "").strip()
+        source_url = str(payload.get("source_url") or "").strip()
+        if not transcript_text or not source_url:
+            return None
+        transcript_date = None
+        if payload.get("transcript_date"):
+            try:
+                transcript_date = date.fromisoformat(str(payload["transcript_date"]))
+            except ValueError:
+                transcript_date = None
+        return CachedTranscript(
+            source_url=source_url,
+            transcript_text=transcript_text,
+            transcript_date=transcript_date,
+            discovery_method=str(payload.get("discovery_method") or "cache"),
+            fetched_at=cache_row.fetched_at,
+        )
+
+    def save_transcript_cache(
+        self,
+        stock_id: int,
+        source_url: str,
+        transcript_text: str,
+        transcript_date: date | None,
+        discovery_method: str,
+    ) -> None:
+        existing = self.db.scalar(
+            select(StockDataCacheModel).where(
+                StockDataCacheModel.stock_id == stock_id,
+                StockDataCacheModel.source == "concall_transcript",
+            )
+        )
+        if existing is None:
+            existing = StockDataCacheModel(stock_id=stock_id, source="concall_transcript", payload_json="{}")
+        existing.payload_json = json.dumps(
+            {
+                "source_url": source_url,
+                "transcript_text": transcript_text,
+                "transcript_date": transcript_date.isoformat() if transcript_date else None,
+                "discovery_method": discovery_method,
+            },
+            default=str,
+        )
+        existing.fetched_at = datetime.utcnow()
+        self.db.add(existing)
+        self.db.commit()
 
     def save_fetched_data(self, stock: StockModel, bundle: StockDataBundle) -> StockModel:
         stock.name = bundle.name

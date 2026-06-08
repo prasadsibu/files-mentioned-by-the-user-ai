@@ -1,11 +1,13 @@
 from urllib.request import Request, urlopen
 
 from app.domain.concall_transcript import ConcallStance, ConcallTranscriptAnalysis, ExtractedConcallSection
+from app.infrastructure.transcripts.transcript_discovery import DiscoveredTranscript, TranscriptDiscoveryService
 
 
 class ConcallTranscriptService:
-    def __init__(self, openai_client=None) -> None:
+    def __init__(self, openai_client=None, transcript_discovery_service: TranscriptDiscoveryService | None = None) -> None:
         self.openai_client = openai_client
+        self.transcript_discovery_service = transcript_discovery_service or TranscriptDiscoveryService()
 
     def analyze(self, transcript: str) -> ConcallTranscriptAnalysis:
         cleaned = transcript.strip()
@@ -25,11 +27,17 @@ class ConcallTranscriptService:
             raise ValueError("concall transcript or transcript_url is required")
         return self.analyze(content)
 
+    def discover_transcript(self, symbol: str, company_name: str | None = None) -> DiscoveredTranscript | None:
+        return self.transcript_discovery_service.discover(symbol=symbol, company_name=company_name)
+
     @staticmethod
     def fetch_transcript_url(transcript_url: str) -> str:
         request = Request(transcript_url, headers={"User-Agent": "stock-intelligence-local/1.0"})
         with urlopen(request, timeout=20) as response:
-            payload = response.read(2_000_000)
+            payload = response.read(4_000_000)
+            content_type = response.headers.get("Content-Type", "").lower()
+        if "pdf" in content_type or transcript_url.lower().split("?")[0].endswith(".pdf"):
+            return TranscriptDiscoveryService.extract_pdf_text(payload)
         return payload.decode("utf-8", errors="ignore")
 
     def _get_openai_client(self):

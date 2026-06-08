@@ -104,7 +104,7 @@ export function Dashboard() {
             <section className="grid gap-4 lg:grid-cols-[1fr_1fr_1fr]">
               <RiskPanel risks={riskFlags} />
               <NewsPanel sentiment={result?.news_sentiment ?? null} newsItems={newsItems} />
-              <ConcallPanel summary={result?.concall_summary ?? null} />
+              <ConcallPanel result={result} />
             </section>
           </section>
         </section>
@@ -490,8 +490,8 @@ function NewsPanel({ sentiment, newsItems }: { sentiment: AnalyzeResponse["news_
       </CardHeader>
       <CardContent className="space-y-3">
         {newsItems.length ? (
-          newsItems.map((item, index) => (
-            <div key={`${item.source}-${item.title}-${index}`} className="rounded-md border border-border bg-secondary/20 p-3">
+          newsItems.map((item) => (
+            <div key={`${item.source}-${item.title}`} className="rounded-md border border-border bg-secondary/20 p-3">
               <div className="flex items-center justify-between gap-3">
                 <Badge variant={item.sentiment === "Positive" ? "positive" : item.sentiment === "Negative" ? "negative" : "neutral"}>
                   {item.sentiment}
@@ -510,7 +510,11 @@ function NewsPanel({ sentiment, newsItems }: { sentiment: AnalyzeResponse["news_
   );
 }
 
-function ConcallPanel({ summary }: { summary: AnalyzeResponse["concall_summary"] | null }) {
+function ConcallPanel({ result }: { result: AnalyzeResponse | null }) {
+  const summary = result?.concall_summary ?? null;
+  const transcriptFound = result?.transcript_found ?? false;
+  const transcriptSource = result?.transcript_source ?? null;
+  const transcriptSourceIsUrl = transcriptSource?.startsWith("http://") || transcriptSource?.startsWith("https://");
   return (
     <Card>
       <CardHeader>
@@ -519,12 +523,27 @@ function ConcallPanel({ summary }: { summary: AnalyzeResponse["concall_summary"]
           Concall Analysis
         </CardTitle>
         <CardDescription>
-          {summary ? `${summary.final_view} view · ${summary.confidence}% confidence` : "Awaiting API concall payload."}
+          {summary && transcriptFound
+            ? `${summary.final_view} view · ${summary.confidence}% confidence${result?.transcript_date ? ` · ${new Date(result.transcript_date).toLocaleDateString("en-IN")}` : ""}`
+            : summary
+              ? "Latest earnings call transcript unavailable."
+              : "Awaiting API concall payload."}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {summary ? (
+        {summary && transcriptFound ? (
           <>
+            {transcriptSource ? (
+              transcriptSourceIsUrl ? (
+                <a className="block rounded-md border border-primary/25 bg-primary/10 p-3 text-xs leading-5 text-primary hover:underline" href={transcriptSource} target="_blank" rel="noreferrer">
+                  Transcript source: {transcriptSource}
+                </a>
+              ) : (
+                <div className="rounded-md border border-primary/25 bg-primary/10 p-3 text-xs leading-5 text-primary">
+                  Transcript source: {transcriptSource}
+                </div>
+              )
+            ) : null}
             {summary.signals.map((signal) => (
               <div key={signal.label} className="rounded-md border border-border bg-secondary/20 p-3">
                 <div className="flex items-center justify-between gap-3">
@@ -538,6 +557,8 @@ function ConcallPanel({ summary }: { summary: AnalyzeResponse["concall_summary"]
               AI summary: {summary.reasoning}
             </div>
           </>
+        ) : summary ? (
+          <EmptyState message={summary.reasoning || "Latest earnings call transcript unavailable."} />
         ) : (
           <EmptyState message="Concall summary will appear after analysis." />
         )}
