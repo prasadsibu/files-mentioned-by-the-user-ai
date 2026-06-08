@@ -40,6 +40,8 @@ export function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [apiStatus, setApiStatus] = useState<"idle" | "live" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [concallTranscript, setConcallTranscript] = useState("");
+  const [concallTranscriptUrl, setConcallTranscriptUrl] = useState("");
 
   const scores = useMemo(() => toScoreItems(result), [result]);
   const fundamentalMetrics = useMemo(() => toFundamentalMetrics(result), [result]);
@@ -57,7 +59,10 @@ export function Dashboard() {
     setError(null);
 
     try {
-      const response = await analyzeStock(symbol);
+      const response = await analyzeStock(symbol, {
+        concallTranscript: concallTranscript.trim() || undefined,
+        concallTranscriptUrl: concallTranscriptUrl.trim() || undefined
+      });
       setResult(response);
       setApiStatus("live");
     } catch (err) {
@@ -74,7 +79,17 @@ export function Dashboard() {
         <TopBar apiStatus={apiStatus} />
         <section className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
           <aside className="flex flex-col gap-4">
-            <SearchPanel stock={stock} setStock={setStock} onAnalyze={onAnalyze} loading={loading} error={error} />
+            <SearchPanel
+              stock={stock}
+              setStock={setStock}
+              onAnalyze={onAnalyze}
+              loading={loading}
+              error={error}
+              concallTranscript={concallTranscript}
+              setConcallTranscript={setConcallTranscript}
+              concallTranscriptUrl={concallTranscriptUrl}
+              setConcallTranscriptUrl={setConcallTranscriptUrl}
+            />
             <RecommendationCard stock={stock} result={result} />
             <ScoreBreakdown scores={scores} />
           </aside>
@@ -127,13 +142,21 @@ function SearchPanel({
   setStock,
   onAnalyze,
   loading,
-  error
+  error,
+  concallTranscript,
+  setConcallTranscript,
+  concallTranscriptUrl,
+  setConcallTranscriptUrl
 }: {
   stock: string;
   setStock: (stock: string) => void;
   onAnalyze: (stock?: string) => void;
   loading: boolean;
   error: string | null;
+  concallTranscript: string;
+  setConcallTranscript: (value: string) => void;
+  concallTranscriptUrl: string;
+  setConcallTranscriptUrl: (value: string) => void;
 }) {
   return (
     <Card>
@@ -164,6 +187,32 @@ function SearchPanel({
             {error}
           </div>
         ) : null}
+
+        <div className="space-y-2 rounded-md border border-border bg-secondary/20 p-3">
+          <p className="text-xs font-medium text-muted-foreground">Optional concall transcript intelligence</p>
+          <Input
+            value={concallTranscriptUrl}
+            onChange={(event) => setConcallTranscriptUrl(event.target.value)}
+            placeholder="Transcript URL"
+            className="font-mono text-xs"
+          />
+          <textarea
+            value={concallTranscript}
+            onChange={(event) => setConcallTranscript(event.target.value)}
+            placeholder="Paste transcript text, or upload a .txt file below"
+            className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-xs text-foreground shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+          <input
+            type="file"
+            accept=".txt,text/plain"
+            className="block w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/10 file:px-3 file:py-1.5 file:text-xs file:text-primary"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              void file.text().then(setConcallTranscript);
+            }}
+          />
+        </div>
         <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
           {suggestedSymbols.map((symbol) => (
             <button
@@ -449,8 +498,8 @@ function NewsPanel({ sentiment, newsItems }: { sentiment: AnalyzeResponse["news_
                 </Badge>
                 <span className="font-mono text-xs text-muted-foreground">{item.score.toFixed(2)}</span>
               </div>
-              <p className="mt-2 text-sm leading-5">{item.title}</p>
-              <p className="mt-1 text-xs text-muted-foreground">{item.source}</p>
+              <a className="mt-2 block text-sm leading-5 hover:text-primary" href={item.url} target="_blank" rel="noreferrer">{item.title}</a>
+              <p className="mt-1 text-xs text-muted-foreground">{item.source}{item.published_at ? ` · ${new Date(item.published_at).toLocaleDateString("en-IN")}` : ""}</p>
             </div>
           ))
         ) : (

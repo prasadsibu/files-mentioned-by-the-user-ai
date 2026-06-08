@@ -3,6 +3,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class AnalyzeRequest(BaseModel):
     stock: str = Field(..., min_length=1, max_length=32, examples=["TCS"])
+    concall_transcript: str | None = Field(default=None, min_length=1)
+    concall_transcript_url: str | None = Field(default=None, min_length=1)
 
     @field_validator("stock")
     @classmethod
@@ -60,7 +62,10 @@ class RiskFlagResponse(BaseModel):
 class NewsSentimentArticleResponse(BaseModel):
     title: str
     source: str
+    published_at: str | None = None
+    url: str
     sentiment: str
+    confidence: float
     score: float
 
 
@@ -69,6 +74,7 @@ class NewsSentimentSummaryResponse(BaseModel):
     neutral: int
     negative: int
     sentiment_score: int
+    article_count: int
     articles: list[NewsSentimentArticleResponse]
 
 
@@ -124,8 +130,8 @@ class AnalyzeResponse(BaseModel):
                 "trend_history": [],
                 "shareholding_history": [],
                 "risk_flags": [],
-                "news_sentiment": {"positive": 0, "neutral": 100, "negative": 0, "sentiment_score": 50, "articles": []},
-                "concall_summary": {"final_view": "Neutral", "confidence": 50, "reasoning": "No transcript analyzed.", "signals": []},
+                "news_sentiment": {"positive": 45, "neutral": 35, "negative": 20, "sentiment_score": 63, "article_count": 10, "articles": []},
+                "concall_summary": {"final_view": "Bullish", "confidence": 82, "reasoning": "Management tone and revenue outlook are constructive.", "signals": []},
                 "score_breakdown": [],
             }
         }

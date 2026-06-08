@@ -9,6 +9,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.dependencies import get_analysis_service, get_db
 from app.application.services.analysis_service import AnalysisService
+from app.application.services.concall_transcript_service import ConcallTranscriptService
+from app.application.services.news_sentiment_service import NewsSentimentService
 from app.domain.analyzers.concall_analyzer import ConcallAnalyzer
 from app.domain.analyzers.financial_analyzer import FinancialAnalyzer
 from app.domain.analyzers.growth_analyzer import GrowthAnalyzer
@@ -16,6 +18,7 @@ from app.domain.analyzers.news_sentiment_analyzer import NewsSentimentAnalyzer
 from app.domain.analyzers.ownership_analyzer import OwnershipAnalyzer
 from app.domain.analyzers.risk_analyzer import RiskAnalyzer
 from app.domain.analyzers.valuation_analyzer import ValuationAnalyzer
+from app.domain.news_sentiment import NewsArticle, SentimentLabel
 from app.domain.recommendation_engine import RecommendationEngine
 from app.infrastructure.database import Base
 from app.infrastructure.market_data.stock_data_provider import (
@@ -24,6 +27,7 @@ from app.infrastructure.market_data.stock_data_provider import (
     StockDataBundle,
     ValuationRecord,
 )
+from app.infrastructure.news.news_collector import NewsCollector
 from app.infrastructure.repositories.analysis_repository import AnalysisRepository
 from app.infrastructure.repositories.stock_repository import StockRepository
 from app.main import app
@@ -111,6 +115,30 @@ class StubStockDataProvider:
         )
 
 
+class StubNewsCollector(NewsCollector):
+    def collect(self, stock_name: str, limit: int = 20) -> list[NewsArticle]:
+        return [
+            NewsArticle(title=f"{stock_name} strong growth", url=f"local://{stock_name}/1", source="test", published_at=None),
+            NewsArticle(title=f"{stock_name} margin pressure", url=f"local://{stock_name}/2", source="test", published_at=None),
+        ]
+
+
+class StubNewsClassifier:
+    def classify(self, text: str) -> tuple[SentimentLabel, float]:
+        if "strong" in text:
+            return SentimentLabel.POSITIVE, 0.9
+        if "pressure" in text:
+            return SentimentLabel.NEGATIVE, 0.8
+        return SentimentLabel.NEUTRAL, 0.7
+
+
+class StubConcallClient:
+    def analyze(self, transcript: str):
+        from app.application.services.concall_transcript_service import RuleBasedConcallTranscriptAnalyzer
+
+        return RuleBasedConcallTranscriptAnalyzer().analyze(transcript)
+
+
 def build_test_service() -> AnalysisService:
     db = TestingSessionLocal()
     stock_repository = StockRepository(db)
@@ -126,6 +154,8 @@ def build_test_service() -> AnalysisService:
         risk_analyzer=RiskAnalyzer(),
         recommendation_engine=RecommendationEngine(),
         stock_data_provider=StubStockDataProvider(),
+        news_sentiment_service=NewsSentimentService(collector=StubNewsCollector(), classifier=StubNewsClassifier()),
+        concall_transcript_service=ConcallTranscriptService(openai_client=StubConcallClient()),
     )
 
 
@@ -160,6 +190,7 @@ def test_analyze_fetches_missing_nse_stock_and_returns_score() -> None:
     assert payload["trend_history"]
     assert payload["shareholding_history"]
     assert payload["risk_flags"]
+    assert payload["news_sentiment"]["article_count"] == 2
     assert payload["news_sentiment"]["articles"]
     assert payload["concall_summary"]["signals"]
 

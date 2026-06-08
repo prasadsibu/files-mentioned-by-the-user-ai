@@ -47,7 +47,10 @@ export type RiskItem = {
 export type NewsItem = {
   title: string;
   source: string;
+  published_at?: string | null;
+  url: string;
   sentiment: "Positive" | "Neutral" | "Negative" | string;
+  confidence: number;
   score: number;
 };
 
@@ -56,6 +59,7 @@ export type NewsSentiment = {
   neutral: number;
   negative: number;
   sentiment_score: number;
+  article_count: number;
   articles: NewsItem[];
 };
 

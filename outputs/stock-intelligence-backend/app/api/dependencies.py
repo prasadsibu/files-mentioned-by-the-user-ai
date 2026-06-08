@@ -44,6 +44,8 @@ def get_analysis_service(db: Session = Depends(get_db)) -> AnalysisService:
         risk_analyzer=RiskAnalyzer(),
         recommendation_engine=RecommendationEngine(),
         stock_data_provider=StockDataProvider(),
+        news_sentiment_service=NewsSentimentService(),
+        concall_transcript_service=ConcallTranscriptService(),
     )
 
 

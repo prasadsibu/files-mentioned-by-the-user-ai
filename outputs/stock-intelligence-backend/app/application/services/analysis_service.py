@@ -22,7 +22,11 @@ from app.domain.analyzers.news_sentiment_analyzer import NewsSentimentAnalyzer
 from app.domain.analyzers.ownership_analyzer import OwnershipAnalyzer
 from app.domain.analyzers.risk_analyzer import RiskAnalyzer
 from app.domain.analyzers.valuation_analyzer import ValuationAnalyzer
-from app.domain.entities import FinancialMetrics, ShareholdingPattern, ValuationMetrics
+from app.application.services.concall_transcript_service import ConcallTranscriptService
+from app.application.services.news_sentiment_service import NewsSentimentService
+from app.domain.concall_transcript import ConcallStance, ConcallTranscriptAnalysis
+from app.domain.entities import ConcallSignals, FinancialMetrics, NewsSentiment, ShareholdingPattern, ValuationMetrics
+from app.domain.news_sentiment import NewsSentimentResult
 from app.domain.recommendation_engine import RecommendationEngine
 from app.infrastructure.market_data.stock_data_provider import StockDataProvider
 from app.infrastructure.repositories.analysis_repository import AnalysisRepository
@@ -46,6 +50,8 @@ class AnalysisService:
         risk_analyzer: RiskAnalyzer,
         recommendation_engine: RecommendationEngine,
         stock_data_provider: StockDataProvider | None = None,
+        news_sentiment_service: NewsSentimentService | None = None,
+        concall_transcript_service: ConcallTranscriptService | None = None,
     ) -> None:
         self.stock_repository = stock_repository
         self.analysis_repository = analysis_repository
@@ -58,6 +64,8 @@ class AnalysisService:
         self.risk_analyzer = risk_analyzer
         self.recommendation_engine = recommendation_engine
         self.stock_data_provider = stock_data_provider or StockDataProvider()
+        self.news_sentiment_service = news_sentiment_service or NewsSentimentService()
+        self.concall_transcript_service = concall_transcript_service or ConcallTranscriptService()
 
     def analyze(self, request: AnalyzeRequest) -> AnalyzeResponse:
         stock = self.stock_repository.get_by_symbol(request.stock)
@@ -89,13 +97,16 @@ class AnalysisService:
         shareholding = snapshots.shareholding or self._default_shareholding()
         shareholding_history = snapshots.shareholding_history or [shareholding]
 
+        news_result = self._analyze_news_sentiment(stock.symbol)
+        concall_result = self._analyze_concall(request)
+
         category_scores = [
             self.financial_analyzer.analyze(financials),
             self.growth_analyzer.analyze(financial_history),
             self.valuation_analyzer.analyze(valuation, financial_history),
             self.ownership_analyzer.analyze(shareholding_history),
-            self.news_sentiment_analyzer.analyze(sentiment=None),
-            self.concall_analyzer.analyze(signals=None),
+            self.news_sentiment_analyzer.analyze(sentiment=self._news_domain(news_result)),
+            self.concall_analyzer.analyze(signals=self._concall_signals(concall_result)),
             self.risk_analyzer.analyze(
                 financials=financials,
                 previous_financials=financial_history[-2]
@@ -126,8 +137,8 @@ class AnalysisService:
                 financial_history=financial_history,
                 shareholding_history=shareholding_history,
             ),
-            news_sentiment=self._news_sentiment(stock.symbol),
-            concall_summary=self._concall_summary(stock.symbol),
+            news_sentiment=self._news_sentiment(news_result),
+            concall_summary=self._concall_summary(concall_result),
             score_breakdown=[
                 ScoreBreakdownItem(
                     category=item.category,
@@ -293,42 +304,122 @@ class AnalysisService:
         if not financial_history or all(item.revenue == 0 and item.net_profit == 0 and item.eps == 0 for item in financial_history):
             missing.append(RiskFlagResponse(label="Missing financial statements", severity="Medium", detected=True, detail="Yahoo/NSE did not return complete financial statements; available fallback metrics were used."))
         if valuation.pe >= 999:
-            missing.append(RiskFlagResponse(label="Missing PE", severity="Low", detected=True, detail="PE was unavailable; valuation scoring used a neutral high placeholder."))
+            missing.append(RiskFlagResponse(label="Missing PE", severity="Low", detected=True, detail="PE was not returned; valuation scoring used a conservative neutral value."))
         if valuation.pb >= 999:
-            missing.append(RiskFlagResponse(label="Missing PB", severity="Low", detected=True, detail="PB was unavailable; valuation scoring used a neutral high placeholder."))
+            missing.append(RiskFlagResponse(label="Missing PB", severity="Low", detected=True, detail="PB was not returned; valuation scoring used a conservative neutral value."))
         if financials.operating_cash_flow == 0 and financials.free_cash_flow == 0:
-            missing.append(RiskFlagResponse(label="Missing cashflow", severity="Low", detected=True, detail="Cash-flow values were unavailable; zero values were used for cash-flow display and risk checks."))
+            missing.append(RiskFlagResponse(label="Missing cashflow", severity="Low", detected=True, detail="Cash-flow values were not returned; zero values were used for cash-flow display and risk checks."))
         if not shareholding_history or (shareholding.promoter_holding == 0 and shareholding.fii_holding == 0 and shareholding.dii_holding == 0):
-            missing.append(RiskFlagResponse(label="Missing shareholding", severity="Low", detected=True, detail="Shareholding data was unavailable; ownership scoring used neutral fallback holdings."))
+            missing.append(RiskFlagResponse(label="Missing shareholding", severity="Low", detected=True, detail="Shareholding data was not returned; ownership scoring used neutral fallback holdings."))
         return missing
 
+    def _analyze_news_sentiment(self, symbol: str) -> NewsSentimentResult:
+        try:
+            return self.news_sentiment_service.analyze(symbol, limit=12)
+        except Exception as exc:
+            logger.warning("news_sentiment_failed symbol=%s error=%s", symbol, exc)
+            return NewsSentimentResult(
+                stock_name=symbol,
+                positive=0,
+                neutral=0,
+                negative=0,
+                sentiment_score=50,
+                articles=[],
+            )
+
+    def _analyze_concall(self, request: AnalyzeRequest) -> ConcallTranscriptAnalysis | None:
+        if not request.concall_transcript and not request.concall_transcript_url:
+            return None
+        try:
+            return self.concall_transcript_service.analyze_input(
+                transcript=request.concall_transcript,
+                transcript_url=request.concall_transcript_url,
+            )
+        except Exception as exc:
+            logger.warning("concall_analysis_failed symbol=%s error=%s", request.stock, exc)
+            return None
+
     @staticmethod
-    def _news_sentiment(symbol: str) -> NewsSentimentSummaryResponse:
+    def _news_domain(result: NewsSentimentResult) -> NewsSentiment:
+        return NewsSentiment(
+            positive_count=sum(1 for item in result.articles if item.label.value == "Positive"),
+            neutral_count=sum(1 for item in result.articles if item.label.value == "Neutral"),
+            negative_count=sum(1 for item in result.articles if item.label.value == "Negative"),
+            average_sentiment_score=(result.sentiment_score / 50) - 1,
+        )
+
+    @staticmethod
+    def _concall_signals(result: ConcallTranscriptAnalysis | None) -> ConcallSignals | None:
+        if result is None:
+            return None
+        sections = [
+            result.expansion_plans,
+            result.order_book,
+            result.margin_outlook,
+            result.debt_discussion,
+            result.risks,
+            result.management_guidance,
+        ]
+        return ConcallSignals(
+            bullish_signals=sum(1 for section in sections if section.sentiment == ConcallStance.BULLISH),
+            neutral_signals=sum(1 for section in sections if section.sentiment == ConcallStance.NEUTRAL),
+            bearish_signals=sum(1 for section in sections if section.sentiment == ConcallStance.BEARISH),
+            has_expansion_plan=bool(result.expansion_plans.evidence),
+            has_order_book_growth=result.order_book.sentiment == ConcallStance.BULLISH,
+            has_margin_guidance=bool(result.margin_outlook.evidence),
+            has_debt_concern=result.debt_discussion.sentiment == ConcallStance.BEARISH,
+        )
+
+    @staticmethod
+    def _news_sentiment(result: NewsSentimentResult) -> NewsSentimentSummaryResponse:
         return NewsSentimentSummaryResponse(
-            positive=0,
-            neutral=100,
-            negative=0,
-            sentiment_score=50,
+            positive=result.positive,
+            neutral=result.neutral,
+            negative=result.negative,
+            sentiment_score=result.sentiment_score,
+            article_count=len(result.articles),
             articles=[
                 NewsSentimentArticleResponse(
-                    title=f"No live news sentiment articles were analyzed for {symbol} in this run.",
-                    source="Analysis API",
-                    sentiment="Neutral",
-                    score=0.5,
+                    title=item.article.title,
+                    source=item.article.source,
+                    published_at=item.article.published_at.isoformat() if item.article.published_at else None,
+                    url=item.article.url,
+                    sentiment=item.label.value,
+                    confidence=item.confidence,
+                    score=item.confidence,
                 )
+                for item in result.articles
             ],
         )
 
     @staticmethod
-    def _concall_summary(symbol: str) -> ConcallSummaryResponse:
+    def _concall_summary(result: ConcallTranscriptAnalysis | None) -> ConcallSummaryResponse:
+        if result is None:
+            return ConcallSummaryResponse(
+                final_view="Not Submitted",
+                confidence=0,
+                reasoning="Upload transcript text or provide a transcript URL to generate concall intelligence.",
+                signals=[],
+            )
+        sections = [
+            ("Management tone", result.debt_discussion),
+            ("Revenue outlook", result.management_guidance),
+            ("Margin outlook", result.margin_outlook),
+            ("Order book commentary", result.order_book),
+            ("Capex plans", result.expansion_plans),
+            ("Risks mentioned", result.risks),
+            ("Guidance changes", result.management_guidance),
+        ]
         return ConcallSummaryResponse(
-            final_view="Neutral",
-            confidence=50,
-            reasoning=f"No concall transcript was submitted for {symbol}; transcript signals are neutral for this analysis.",
+            final_view=result.final_view.value,
+            confidence=result.confidence,
+            reasoning=result.reasoning,
             signals=[
-                ConcallSignalResponse(label="Expansion plans", detail="No transcript evidence available.", tone="neutral"),
-                ConcallSignalResponse(label="Order book", detail="No transcript evidence available.", tone="neutral"),
-                ConcallSignalResponse(label="Margins", detail="No transcript evidence available.", tone="neutral"),
-                ConcallSignalResponse(label="Debt commentary", detail="No transcript evidence available.", tone="neutral"),
+                ConcallSignalResponse(
+                    label=label,
+                    detail=section.summary,
+                    tone=section.sentiment.value.lower(),
+                )
+                for label, section in sections
             ],
         )

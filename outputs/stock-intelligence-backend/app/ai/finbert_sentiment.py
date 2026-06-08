@@ -100,7 +100,7 @@ class RuleBasedFinancialSentimentClassifier(SentimentClassifier):
 
 class ResilientFinBERTClassifier(SentimentClassifier):
     def __init__(self, finbert: FinBERTSentimentClassifier | None = None) -> None:
-        self.finbert = finbert or FinBERTSentimentClassifier(local_files_only=True)
+        self.finbert = finbert or FinBERTSentimentClassifier(local_files_only=False)
         self.fallback = RuleBasedFinancialSentimentClassifier()
         self._finbert_failed = False
 
