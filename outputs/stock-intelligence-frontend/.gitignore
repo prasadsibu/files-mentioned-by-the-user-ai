@@ -1,8 +1,37 @@
+# Dependencies
 node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Next.js
 .next/
 out/
-.env.local
+build/
+dist/
+.vercel/
+
+# Environment
 .env
+.env.local
+.env.*.local
+
+# Logs
 npm-debug.log*
+npm-error.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS
+Thumbs.db
