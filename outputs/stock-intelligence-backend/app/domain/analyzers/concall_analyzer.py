@@ -10,7 +10,7 @@ class ConcallAnalyzer:
                 category="concall",
                 weight=self.weight,
                 score=50,
-                reasoning="Concall data is unavailable; assigning neutral score.",
+                reasoning="No concall transcript was submitted for this run; assigning neutral score.",
                 input_values={"status": "not_available"},
             )
 

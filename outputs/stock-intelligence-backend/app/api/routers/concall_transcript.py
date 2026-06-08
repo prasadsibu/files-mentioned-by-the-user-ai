@@ -12,5 +12,5 @@ def analyze_concall_transcript(
     request: ConcallTranscriptRequest,
     service: ConcallTranscriptService = Depends(get_concall_transcript_service),
 ) -> ConcallTranscriptResponse:
-    result = service.analyze(request.transcript)
+    result = service.analyze_input(request.transcript, request.transcript_url)
     return ConcallTranscriptResponse(**result.to_api_dict())

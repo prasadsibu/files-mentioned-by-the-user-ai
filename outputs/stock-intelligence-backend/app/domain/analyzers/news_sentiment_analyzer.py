@@ -10,7 +10,7 @@ class NewsSentimentAnalyzer:
                 category="news_sentiment",
                 weight=self.weight,
                 score=50,
-                reasoning="News sentiment data is unavailable; assigning neutral score.",
+                reasoning="No news articles were collected for this run; assigning neutral score.",
                 input_values={"status": "not_available"},
             )
 
