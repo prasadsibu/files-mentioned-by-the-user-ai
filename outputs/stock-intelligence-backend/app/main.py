@@ -7,15 +7,12 @@ from app.api.routers.concall_transcript import router as concall_transcript_rout
 from app.api.routers.news_sentiment import router as news_sentiment_router
 from app.core.config import get_settings
 from app.infrastructure.database import Base, engine
-from app.infrastructure.seed_data import seed_database
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
 
     Base.metadata.create_all(bind=engine)
-    seed_database()
-
     app = FastAPI(title=settings.app_name, version="1.0.0")
 
     app.add_middleware(

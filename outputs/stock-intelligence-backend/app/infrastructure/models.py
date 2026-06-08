@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infrastructure.database import Base
@@ -18,6 +18,9 @@ class StockModel(Base):
     financials: Mapped[list["FinancialMetricModel"]] = relationship(back_populates="stock")
     valuations: Mapped[list["ValuationMetricModel"]] = relationship(back_populates="stock")
     shareholding: Mapped[list["ShareholdingPatternModel"]] = relationship(back_populates="stock")
+    historical_prices: Mapped[list["HistoricalPriceModel"]] = relationship(back_populates="stock")
+    corporate_actions: Mapped[list["CorporateActionModel"]] = relationship(back_populates="stock")
+    data_cache: Mapped[list["StockDataCacheModel"]] = relationship(back_populates="stock")
 
 
 class FinancialMetricModel(Base):
@@ -67,6 +70,47 @@ class ShareholdingPatternModel(Base):
     pledged_shares: Mapped[float] = mapped_column(Float)
 
     stock: Mapped[StockModel] = relationship(back_populates="shareholding")
+
+
+class HistoricalPriceModel(Base):
+    __tablename__ = "historical_prices"
+    __table_args__ = (UniqueConstraint("stock_id", "trade_date", name="uq_historical_prices_stock_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id"), index=True)
+    trade_date: Mapped[date] = mapped_column(Date, index=True)
+    open: Mapped[float] = mapped_column(Float)
+    high: Mapped[float] = mapped_column(Float)
+    low: Mapped[float] = mapped_column(Float)
+    close: Mapped[float] = mapped_column(Float)
+    volume: Mapped[int] = mapped_column(Integer)
+
+    stock: Mapped[StockModel] = relationship(back_populates="historical_prices")
+
+
+class CorporateActionModel(Base):
+    __tablename__ = "corporate_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id"), index=True)
+    action_date: Mapped[date] = mapped_column(Date, index=True)
+    action_type: Mapped[str] = mapped_column(String(64))
+    description: Mapped[str] = mapped_column(Text)
+
+    stock: Mapped[StockModel] = relationship(back_populates="corporate_actions")
+
+
+class StockDataCacheModel(Base):
+    __tablename__ = "stock_data_cache"
+    __table_args__ = (UniqueConstraint("stock_id", "source", name="uq_stock_data_cache_stock_source"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id"), index=True)
+    source: Mapped[str] = mapped_column(String(64))
+    payload_json: Mapped[str] = mapped_column(Text)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    stock: Mapped[StockModel] = relationship(back_populates="data_cache")
 
 
 class AnalysisRunModel(Base):

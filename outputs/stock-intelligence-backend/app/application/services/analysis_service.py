@@ -8,6 +8,7 @@ from app.domain.analyzers.ownership_analyzer import OwnershipAnalyzer
 from app.domain.analyzers.risk_analyzer import RiskAnalyzer
 from app.domain.analyzers.valuation_analyzer import ValuationAnalyzer
 from app.domain.recommendation_engine import RecommendationEngine
+from app.infrastructure.market_data.stock_data_provider import StockDataProvider
 from app.infrastructure.repositories.analysis_repository import AnalysisRepository
 from app.infrastructure.repositories.stock_repository import StockRepository
 
@@ -25,6 +26,7 @@ class AnalysisService:
         concall_analyzer: ConcallAnalyzer,
         risk_analyzer: RiskAnalyzer,
         recommendation_engine: RecommendationEngine,
+        stock_data_provider: StockDataProvider | None = None,
     ) -> None:
         self.stock_repository = stock_repository
         self.analysis_repository = analysis_repository
@@ -36,6 +38,7 @@ class AnalysisService:
         self.concall_analyzer = concall_analyzer
         self.risk_analyzer = risk_analyzer
         self.recommendation_engine = recommendation_engine
+        self.stock_data_provider = stock_data_provider or StockDataProvider()
 
     def analyze(self, request: AnalyzeRequest) -> AnalyzeResponse:
         stock = self.stock_repository.get_by_symbol(request.stock)
@@ -43,8 +46,20 @@ class AnalysisService:
             stock = self.stock_repository.create_placeholder(request.stock)
 
         snapshots = self.stock_repository.get_stock_snapshot(stock.id)
+        if (
+            snapshots.financials is None
+            or snapshots.valuation is None
+            or snapshots.shareholding is None
+            or not self.stock_repository.is_cache_fresh(stock.id)
+        ):
+            fetched_data = self.stock_data_provider.fetch(stock.symbol)
+            if not fetched_data.is_analyzable:
+                raise AnalysisError(f"Unable to fetch enough market data to analyze {stock.symbol}")
+            stock = self.stock_repository.save_fetched_data(stock, fetched_data)
+            snapshots = self.stock_repository.get_stock_snapshot(stock.id)
+
         if snapshots.financials is None or snapshots.valuation is None or snapshots.shareholding is None:
-            raise AnalysisError(f"Insufficient local data to analyze {stock.symbol}")
+            raise AnalysisError(f"Unable to fetch enough market data to analyze {stock.symbol}")
 
         category_scores = [
             self.financial_analyzer.analyze(snapshots.financials),
