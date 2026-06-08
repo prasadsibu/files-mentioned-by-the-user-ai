@@ -3,6 +3,7 @@ from datetime import date, datetime
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.api.dependencies import get_analysis_service, get_db
 from app.application.services.analysis_service import AnalysisService
@@ -111,7 +112,7 @@ def build_test_service() -> AnalysisService:
     )
 
 
-engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
 
@@ -133,8 +134,17 @@ def test_analyze_fetches_missing_nse_stock_and_returns_score() -> None:
     response = client.post("/analyze", json={"stock": "RELIANCE"})
 
     assert response.status_code == 200
-    assert response.json()["recommendation"] in {"BUY", "HOLD", "SELL"}
-    assert response.json()["score"] > 0
+    payload = response.json()
+    assert payload["symbol"] == "RELIANCE"
+    assert payload["recommendation"] in {"BUY", "WATCH", "IGNORE"}
+    assert payload["score"] > 0
+    assert payload["fundamentals"]["roe"] == 18
+    assert payload["valuation"]["pe"] == 18
+    assert payload["trend_history"]
+    assert payload["shareholding_history"]
+    assert payload["risk_flags"]
+    assert payload["news_sentiment"]["articles"]
+    assert payload["concall_summary"]["signals"]
 
 
 def test_analyze_reuses_cached_stock_data() -> None:

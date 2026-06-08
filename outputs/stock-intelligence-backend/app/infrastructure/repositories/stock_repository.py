@@ -19,12 +19,19 @@ from app.infrastructure.models import (
 
 
 @dataclass(frozen=True)
+class HistoricalPricePoint:
+    fiscal_year: int
+    price: float
+
+
+@dataclass(frozen=True)
 class StockSnapshot:
     financials: FinancialMetrics | None
     financial_history: list[FinancialMetrics]
     valuation: ValuationMetrics | None
     shareholding: ShareholdingPattern | None
     shareholding_history: list[ShareholdingPattern]
+    price_history: list[HistoricalPricePoint]
 
 
 class StockRepository:
@@ -188,6 +195,13 @@ class StockRepository:
                 .order_by(ShareholdingPatternModel.id.asc())
             )
         )
+        price_rows = list(
+            self.db.scalars(
+                select(HistoricalPriceModel)
+                .where(HistoricalPriceModel.stock_id == stock_id)
+                .order_by(HistoricalPriceModel.trade_date.asc())
+            )
+        )
 
         financial_history = [self._to_financial_entity(row) for row in financial_rows]
         shareholding_history = [self._to_shareholding_entity(row) for row in shareholding_rows]
@@ -198,6 +212,7 @@ class StockRepository:
             valuation=self._to_valuation_entity(valuation_row) if valuation_row else None,
             shareholding=self._to_shareholding_entity(shareholding_row) if shareholding_row else None,
             shareholding_history=shareholding_history,
+            price_history=self._to_year_end_prices(price_rows),
         )
 
     @staticmethod
@@ -236,3 +251,13 @@ class StockRepository:
             retail_holding=row.retail_holding,
             pledged_shares=row.pledged_shares,
         )
+
+    @staticmethod
+    def _to_year_end_prices(rows: list[HistoricalPriceModel]) -> list[HistoricalPricePoint]:
+        latest_by_year: dict[int, HistoricalPriceModel] = {}
+        for row in rows:
+            latest_by_year[row.trade_date.year] = row
+        return [
+            HistoricalPricePoint(fiscal_year=year, price=row.close)
+            for year, row in sorted(latest_by_year.items())
+        ]

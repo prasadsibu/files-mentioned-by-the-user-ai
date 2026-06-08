@@ -19,7 +19,7 @@ export function RevenueGrowthChart({ data, className = "h-[320px]" }: ChartProps
       ]}
       layout={{
         title: { text: "Revenue Growth", font: { size: 13 } },
-        yaxis: { title: "Revenue (₹ Cr)", gridcolor: "#223042" }
+        yaxis: { title: { text: "Revenue (₹ Cr)" }, gridcolor: "#223042" }
       }}
     />
   );
