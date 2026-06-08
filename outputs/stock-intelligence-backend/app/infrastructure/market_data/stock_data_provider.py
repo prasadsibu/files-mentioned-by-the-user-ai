@@ -94,7 +94,6 @@ class ResolvedTicker:
 
 class StockDataProvider:
     """Fetches NSE-listed stock data from Yahoo Finance and NSE India.
-
     The provider tries multiple symbol resolution paths before giving up:
     direct Yahoo NSE suffix, NSE autocomplete lookup, Yahoo search, and BSE
     suffix fallback. Missing PE/PB/shareholding/cash-flow data is represented
