@@ -109,7 +109,11 @@ class AnalyzeResponse(BaseModel):
     shareholding_history: list[ShareholdingHistoryPoint]
     risk_flags: list[RiskFlagResponse]
     news_sentiment: NewsSentimentSummaryResponse
+    news_score: int
+    news_reasoning: str
     concall_summary: ConcallSummaryResponse
+    concall_score: int
+    concall_reasoning: str
     score_breakdown: list[ScoreBreakdownItem]
 
     model_config = ConfigDict(
@@ -131,7 +135,11 @@ class AnalyzeResponse(BaseModel):
                 "shareholding_history": [],
                 "risk_flags": [],
                 "news_sentiment": {"positive": 45, "neutral": 35, "negative": 20, "sentiment_score": 63, "article_count": 10, "articles": []},
+                "news_score": 72,
+                "news_reasoning": "News recommendation: WATCH. Classified 10 articles with 45% positive, 35% neutral, and 20% negative flow.",
                 "concall_summary": {"final_view": "Bullish", "confidence": 82, "reasoning": "Management tone and revenue outlook are constructive.", "signals": []},
+                "concall_score": 85,
+                "concall_reasoning": "Concall recommendation: BUY. Management tone and outlook signals are constructive.",
                 "score_breakdown": [],
             }
         }

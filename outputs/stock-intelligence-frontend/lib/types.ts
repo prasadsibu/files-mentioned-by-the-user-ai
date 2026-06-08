@@ -102,7 +102,11 @@ export type AnalyzeResponse = {
   shareholding_history: ShareholdingPoint[];
   risk_flags: RiskItem[];
   news_sentiment: NewsSentiment;
+  news_score: number;
+  news_reasoning: string;
   concall_summary: ConcallSummary;
+  concall_score: number;
+  concall_reasoning: string;
   score_breakdown: ScoreBreakdownItem[];
 };
 

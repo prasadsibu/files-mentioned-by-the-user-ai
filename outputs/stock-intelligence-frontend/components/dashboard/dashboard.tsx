@@ -485,13 +485,13 @@ function NewsPanel({ sentiment, newsItems }: { sentiment: AnalyzeResponse["news_
           News Analysis
         </CardTitle>
         <CardDescription>
-          {sentiment ? `Sentiment score ${sentiment.sentiment_score}/100 · +${sentiment.positive}% / ${sentiment.neutral}% / -${sentiment.negative}%` : "Awaiting API sentiment payload."}
+          {sentiment ? `Sentiment score ${sentiment.sentiment_score}/100 · ${sentiment.article_count} articles · +${sentiment.positive}% / ${sentiment.neutral}% / -${sentiment.negative}%` : "Awaiting API sentiment payload."}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         {newsItems.length ? (
           newsItems.map((item) => (
-            <div key={`${item.source}-${item.title}`} className="rounded-md border border-border bg-secondary/20 p-3">
+            <div key={`${item.source}-${item.title}-${item.url}`} className="rounded-md border border-border bg-secondary/20 p-3">
               <div className="flex items-center justify-between gap-3">
                 <Badge variant={item.sentiment === "Positive" ? "positive" : item.sentiment === "Negative" ? "negative" : "neutral"}>
                   {item.sentiment}
