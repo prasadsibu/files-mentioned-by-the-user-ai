@@ -16,7 +16,7 @@ export function ProfitGrowthChart({ data, className = "h-[320px]" }: ChartProps<
       ]}
       layout={{
         title: { text: "Profit Growth", font: { size: 13 } },
-        yaxis: { title: "Profit (₹ Cr)", gridcolor: "#223042" }
+        yaxis: { title: { text: "Profit (₹ Cr)" }, gridcolor: "#223042" }
       }}
     />
   );

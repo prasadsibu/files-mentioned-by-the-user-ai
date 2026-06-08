@@ -1,9 +1,13 @@
+from urllib.request import Request, urlopen
+
 from app.domain.concall_transcript import ConcallStance, ConcallTranscriptAnalysis, ExtractedConcallSection
+from app.infrastructure.transcripts.transcript_discovery import DiscoveredTranscript, TranscriptDiscoveryService
 
 
 class ConcallTranscriptService:
-    def __init__(self, openai_client=None) -> None:
+    def __init__(self, openai_client=None, transcript_discovery_service: TranscriptDiscoveryService | None = None) -> None:
         self.openai_client = openai_client
+        self.transcript_discovery_service = transcript_discovery_service or TranscriptDiscoveryService()
 
     def analyze(self, transcript: str) -> ConcallTranscriptAnalysis:
         cleaned = transcript.strip()
@@ -14,6 +18,27 @@ class ConcallTranscriptService:
             return self._get_openai_client().analyze(cleaned)
         except Exception:
             return RuleBasedConcallTranscriptAnalyzer().analyze(cleaned)
+
+    def analyze_input(self, transcript: str | None = None, transcript_url: str | None = None) -> ConcallTranscriptAnalysis:
+        content = (transcript or "").strip()
+        if not content and transcript_url:
+            content = self.fetch_transcript_url(transcript_url)
+        if not content:
+            raise ValueError("concall transcript or transcript_url is required")
+        return self.analyze(content)
+
+    def discover_transcript(self, symbol: str, company_name: str | None = None) -> DiscoveredTranscript | None:
+        return self.transcript_discovery_service.discover(symbol=symbol, company_name=company_name)
+
+    @staticmethod
+    def fetch_transcript_url(transcript_url: str) -> str:
+        request = Request(transcript_url, headers={"User-Agent": "stock-intelligence-local/1.0"})
+        with urlopen(request, timeout=20) as response:
+            payload = response.read(4_000_000)
+            content_type = response.headers.get("Content-Type", "").lower()
+        if "pdf" in content_type or transcript_url.lower().split("?")[0].endswith(".pdf"):
+            return TranscriptDiscoveryService.extract_pdf_text(payload)
+        return payload.decode("utf-8", errors="ignore")
 
     def _get_openai_client(self):
         if self.openai_client is not None:
@@ -37,6 +62,10 @@ class RuleBasedConcallTranscriptAnalyzer:
         "guidance",
         "growth",
         "operating leverage",
+        "bullish",
+        "market share",
+        "revenue growth",
+        "price increase",
     }
     bearish_terms = {
         "slowdown",
@@ -49,6 +78,8 @@ class RuleBasedConcallTranscriptAnalyzer:
         "cost pressure",
         "uncertainty",
         "decline",
+        "guidance cut",
+        "headwind",
     }
 
     def analyze(self, transcript: str) -> ConcallTranscriptAnalysis:
@@ -56,12 +87,12 @@ class RuleBasedConcallTranscriptAnalyzer:
             "expansion_plans": self._extract_section(
                 transcript,
                 ["expansion", "capacity", "capex", "new plant"],
-                "Expansion Plans",
+                "Capex Plans",
             ),
             "order_book": self._extract_section(
                 transcript,
                 ["order book", "orders", "inflow", "pipeline"],
-                "Order Book",
+                "Order Book Commentary",
             ),
             "margin_outlook": self._extract_section(
                 transcript,
@@ -70,18 +101,18 @@ class RuleBasedConcallTranscriptAnalyzer:
             ),
             "debt_discussion": self._extract_section(
                 transcript,
-                ["debt", "borrowings", "cash", "working capital"],
-                "Debt Discussion",
+                ["tone", "management", "debt", "borrowings", "cash", "working capital"],
+                "Management Tone And Balance Sheet",
             ),
             "risks": self._extract_section(
                 transcript,
-                ["risk", "pressure", "delay", "slowdown", "uncertainty"],
-                "Risks",
+                ["risk", "pressure", "delay", "slowdown", "uncertainty", "headwind"],
+                "Risks Mentioned",
             ),
             "management_guidance": self._extract_section(
                 transcript,
-                ["guidance", "outlook", "expect", "target", "plan"],
-                "Management Guidance",
+                ["guidance", "outlook", "expect", "target", "plan", "revenue"],
+                "Revenue Outlook And Guidance Changes",
             ),
         }
 
@@ -96,7 +127,8 @@ class RuleBasedConcallTranscriptAnalyzer:
         else:
             final_view = ConcallStance.NEUTRAL
 
-        confidence = min(95, 45 + abs(bullish_count - bearish_count) * 12 + len(self._sentences(transcript)) // 8)
+        evidence_count = sum(len(section.evidence) for section in sections.values())
+        confidence = min(95, 45 + abs(bullish_count - bearish_count) * 12 + evidence_count * 2)
 
         return ConcallTranscriptAnalysis(
             expansion_plans=sections["expansion_plans"],
@@ -108,8 +140,8 @@ class RuleBasedConcallTranscriptAnalyzer:
             final_view=final_view,
             confidence=confidence,
             reasoning=(
-                f"Rule-based fallback found {bullish_count} bullish sections and "
-                f"{bearish_count} bearish sections from transcript keywords."
+                f"Analysis found {bullish_count} bullish sections and "
+                f"{bearish_count} bearish sections across management tone, revenue outlook, margins, order book, capex, risks, and guidance."
             ),
         )
 
@@ -125,7 +157,7 @@ class RuleBasedConcallTranscriptAnalyzer:
         summary = (
             self._summarize(label, section_text)
             if section_text
-            else f"No explicit {label.lower()} commentary found in the transcript."
+            else f"{label}: no explicit transcript commentary was found."
         )
 
         return ExtractedConcallSection(

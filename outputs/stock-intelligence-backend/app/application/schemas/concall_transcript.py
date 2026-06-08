@@ -1,16 +1,23 @@
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ConcallTranscriptRequest(BaseModel):
-    transcript: str = Field(..., min_length=1)
+    transcript: str | None = Field(default=None, min_length=1)
+    transcript_url: str | None = Field(default=None, min_length=1)
 
-    @field_validator("transcript")
+    @field_validator("transcript", "transcript_url")
     @classmethod
-    def normalize_transcript(cls, value: str) -> str:
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         cleaned = value.strip()
-        if not cleaned:
-            raise ValueError("transcript is required")
-        return cleaned
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def require_transcript_input(self):
+        if not self.transcript and not self.transcript_url:
+            raise ValueError("transcript or transcript_url is required")
+        return self
 
 
 class ConcallSectionResponse(BaseModel):
