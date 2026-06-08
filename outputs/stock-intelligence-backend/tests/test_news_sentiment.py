@@ -26,7 +26,7 @@ class StubClassifier(SentimentClassifier):
 def test_news_sentiment_service_returns_percentages_and_score() -> None:
     service = NewsSentimentService(collector=StubCollector(), classifier=StubClassifier())
 
-    result = service.analyze("VOLTAMP")
+    result = service.analyze("TCS")
 
     assert result.to_api_dict() == {
         "positive": 50,

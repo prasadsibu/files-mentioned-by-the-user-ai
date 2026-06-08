@@ -2,7 +2,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class NewsSentimentRequest(BaseModel):
-    stock: str = Field(..., min_length=1, max_length=128, examples=["VOLTAMP"])
+    stock: str = Field(..., min_length=1, max_length=128, examples=["TCS"])
 
     @field_validator("stock")
     @classmethod

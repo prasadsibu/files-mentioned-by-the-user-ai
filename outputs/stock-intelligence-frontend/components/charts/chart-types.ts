@@ -15,6 +15,7 @@ export type ShareholdingTrendPoint = {
   fii: number;
   dii: number;
   retail: number;
+  pledged_shares?: number;
 };
 
 export type ChartProps<T> = {
