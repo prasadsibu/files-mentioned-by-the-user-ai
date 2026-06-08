@@ -28,7 +28,7 @@ export function PeComparisonChart({ data, industryPe = 32, className = "h-[320px
       ]}
       layout={{
         title: { text: "PE Comparison", font: { size: 13 } },
-        yaxis: { title: "PE Multiple", gridcolor: "#223042" }
+        yaxis: { title: { text: "PE Multiple" }, gridcolor: "#223042" }
       }}
     />
   );

@@ -1,6 +1,6 @@
 from app.ai.finbert_sentiment import ResilientFinBERTClassifier, SentimentClassifier
 from app.domain.news_sentiment import ClassifiedNewsArticle, NewsSentimentResult, SentimentLabel
-from app.infrastructure.news.news_collector import GoogleNewsRSSCollector, NewsCollector, StaticNewsCollector
+from app.infrastructure.news.news_collector import CompositeNewsCollector, NewsCollector
 
 
 class NewsSentimentService:
@@ -10,9 +10,9 @@ class NewsSentimentService:
         classifier: SentimentClassifier | None = None,
         fallback_collector: NewsCollector | None = None,
     ) -> None:
-        self.collector = collector or GoogleNewsRSSCollector()
+        self.collector = collector or CompositeNewsCollector()
         self.classifier = classifier or ResilientFinBERTClassifier()
-        self.fallback_collector = fallback_collector or StaticNewsCollector()
+        self.fallback_collector = fallback_collector
 
     def analyze(self, stock_name: str, limit: int = 20) -> NewsSentimentResult:
         normalized_stock = stock_name.strip()
@@ -22,9 +22,9 @@ class NewsSentimentService:
         try:
             articles = self.collector.collect(normalized_stock, limit=limit)
         except Exception:
-            articles = self.fallback_collector.collect(normalized_stock, limit=limit)
+            articles = []
 
-        if not articles:
+        if not articles and self.fallback_collector is not None:
             articles = self.fallback_collector.collect(normalized_stock, limit=limit)
 
         classified_articles = [
@@ -49,7 +49,7 @@ class NewsSentimentService:
             return NewsSentimentResult(
                 stock_name=stock_name,
                 positive=0,
-                neutral=100,
+                neutral=0,
                 negative=0,
                 sentiment_score=50,
                 articles=[],

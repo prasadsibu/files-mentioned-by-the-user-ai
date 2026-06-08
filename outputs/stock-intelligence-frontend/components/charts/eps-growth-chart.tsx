@@ -18,7 +18,7 @@ export function EpsGrowthChart({ data, className = "h-[320px]" }: ChartProps<Fin
       ]}
       layout={{
         title: { text: "EPS Growth", font: { size: 13 } },
-        yaxis: { title: "EPS (₹)", gridcolor: "#223042" }
+        yaxis: { title: { text: "EPS (₹)" }, gridcolor: "#223042" }
       }}
     />
   );

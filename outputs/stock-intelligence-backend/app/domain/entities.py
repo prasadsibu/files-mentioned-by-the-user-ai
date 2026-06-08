@@ -42,6 +42,10 @@ class NewsSentiment:
     neutral_count: int
     negative_count: int
     average_sentiment_score: float
+    positive_percent: float = 0
+    neutral_percent: float = 0
+    negative_percent: float = 0
+    average_confidence: float = 0
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,14 @@ class ConcallSignals:
     has_order_book_growth: bool
     has_margin_guidance: bool
     has_debt_concern: bool
+    management_tone: str = "Neutral"
+    revenue_outlook: str = "Neutral"
+    margin_outlook: str = "Neutral"
+    order_book_commentary: str = "Neutral"
+    capex_plans: str = "Neutral"
+    risks_mentioned: str = "Neutral"
+    guidance_changes: str = "Neutral"
+    confidence: int = 0
 
 
 @dataclass(frozen=True)

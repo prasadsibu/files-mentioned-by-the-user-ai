@@ -73,12 +73,12 @@ class OpenAIConcallClient:
     def _build_prompt(transcript: str) -> str:
         return f"""
 Analyze this concall transcript and extract:
-- expansion_plans
-- order_book
-- margin_outlook
-- debt_discussion
-- risks
-- management_guidance
+- management tone and balance-sheet/debt commentary as debt_discussion
+- revenue outlook and guidance changes as management_guidance
+- margin outlook
+- order book commentary
+- capex plans as expansion_plans
+- risks mentioned
 
 For each section return:
 - summary: concise analyst summary
@@ -88,7 +88,7 @@ For each section return:
 Also return:
 - final_view: Bullish, Neutral, or Bearish
 - confidence: integer 0-100
-- reasoning: concise explanation for the final view
+- reasoning: concise explanation covering management tone, revenue outlook, margin outlook, order book commentary, capex plans, risks mentioned, and guidance changes
 
 JSON shape:
 {{

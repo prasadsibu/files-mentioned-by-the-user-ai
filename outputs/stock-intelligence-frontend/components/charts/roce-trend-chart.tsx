@@ -26,7 +26,7 @@ export function RoceTrendChart({ data, className = "h-[320px]" }: ChartProps<Fin
       ]}
       layout={{
         title: { text: "ROCE Trend", font: { size: 13 } },
-        yaxis: { title: "ROCE (%)", gridcolor: "#223042" }
+        yaxis: { title: { text: "ROCE (%)" }, gridcolor: "#223042" }
       }}
     />
   );

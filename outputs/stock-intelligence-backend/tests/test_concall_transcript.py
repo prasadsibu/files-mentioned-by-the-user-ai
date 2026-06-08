@@ -36,3 +36,14 @@ def test_concall_output_contains_required_sections() -> None:
         "confidence",
         "reasoning",
     }
+
+
+def test_concall_service_accepts_transcript_input() -> None:
+    from app.application.services.concall_transcript_service import ConcallTranscriptService
+
+    result = ConcallTranscriptService(openai_client=None).analyze_input(
+        transcript="Revenue outlook is strong. Margin improvement is expected. Order book remains healthy."
+    )
+
+    assert result.final_view.value in {"Bullish", "Neutral", "Bearish"}
+    assert result.confidence >= 0
