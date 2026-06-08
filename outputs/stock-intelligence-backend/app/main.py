@@ -1,3 +1,4 @@
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -7,6 +8,9 @@ from app.api.routers.concall_transcript import router as concall_transcript_rout
 from app.api.routers.news_sentiment import router as news_sentiment_router
 from app.core.config import get_settings
 from app.infrastructure.database import Base, engine
+from app.ai.finbert_sentiment import initialize_finbert_classifier
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -27,6 +31,13 @@ def create_app() -> FastAPI:
     app.include_router(analyze_router)
     app.include_router(news_sentiment_router)
     app.include_router(concall_transcript_router)
+
+    @app.on_event("startup")
+    async def startup_event() -> None:
+        """Initialize FinBERT model at application startup."""
+        logger.info("Starting up application")
+        initialize_finbert_classifier()
+        logger.info("Application startup complete")
 
     @app.get("/health", tags=["system"])
     def health() -> dict[str, str]:

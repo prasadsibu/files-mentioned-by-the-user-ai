@@ -18,6 +18,7 @@ from app.infrastructure.database import SessionLocal
 from app.infrastructure.market_data.stock_data_provider import StockDataProvider
 from app.infrastructure.repositories.analysis_repository import AnalysisRepository
 from app.infrastructure.repositories.stock_repository import StockRepository
+from app.ai.finbert_sentiment import get_sentiment_classifier
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -44,13 +45,14 @@ def get_analysis_service(db: Session = Depends(get_db)) -> AnalysisService:
         risk_analyzer=RiskAnalyzer(),
         recommendation_engine=RecommendationEngine(),
         stock_data_provider=StockDataProvider(),
-        news_sentiment_service=NewsSentimentService(),
+        news_sentiment_service=NewsSentimentService(classifier=get_sentiment_classifier()),
         concall_transcript_service=ConcallTranscriptService(),
     )
 
 
 def get_news_sentiment_service() -> NewsSentimentService:
-    return NewsSentimentService()
+    """Get news sentiment service with singleton FinBERT classifier."""
+    return NewsSentimentService(classifier=get_sentiment_classifier())
 
 
 def get_concall_transcript_service() -> ConcallTranscriptService:

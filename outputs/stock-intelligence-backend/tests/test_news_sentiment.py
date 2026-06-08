@@ -1,4 +1,4 @@
-from app.ai.finbert_sentiment import SentimentClassifier
+from app.ai.finbert_sentiment import SentimentClassifier, get_sentiment_classifier
 from app.application.services.news_sentiment_service import NewsSentimentService
 from app.domain.news_sentiment import NewsArticle, SentimentLabel
 from app.infrastructure.news.news_collector import NewsCollector
@@ -37,3 +37,15 @@ def test_news_sentiment_service_returns_percentages_and_score() -> None:
     assert payload["article_count"] == 4
     assert payload["articles"][0]["title"] == "strong growth"
     assert payload["articles"][0]["sentiment"] == "Positive"
+
+
+def test_news_sentiment_service_uses_singleton_classifier() -> None:
+    """Test that service can use the singleton classifier."""
+    classifier = get_sentiment_classifier()
+    service = NewsSentimentService(collector=StubCollector(), classifier=classifier)
+
+    result = service.analyze("TCS")
+
+    # Should not raise errors
+    assert result is not None
+

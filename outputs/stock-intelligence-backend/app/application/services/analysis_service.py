@@ -400,42 +400,56 @@ class AnalysisService:
             except Exception as exc:
                 logger.warning("concall_cached_analysis_failed symbol=%s error=%s", symbol, exc)
 
-        logger.info("concall_transcript_cache_miss symbol=%s", symbol)
-        try:
-            discovered = self.concall_transcript_service.discover_transcript(symbol=symbol, company_name=company_name)
-        except Exception as exc:
-            logger.warning("concall_transcript_discovery_failed symbol=%s error=%s", symbol, exc)
-            discovered = None
-
-        if discovered is None:
-            logger.info("concall_transcript_unavailable symbol=%s", symbol)
-            return ConcallAnalysisContext(None, False, None, None, None)
-
         logger.info(
-            "concall_transcript_retrieved symbol=%s source=%s method=%s chars=%s",
+            "concall_transcript_auto_discovery_disabled symbol=%s",
             symbol,
-            discovered.source_url,
-            discovered.discovery_method,
-            len(discovered.transcript_text),
         )
-        self.stock_repository.save_transcript_cache(
-            stock_id=stock_id,
-            source_url=discovered.source_url,
-            transcript_text=discovered.transcript_text,
-            transcript_date=discovered.transcript_date,
-            discovery_method=discovered.discovery_method,
+
+        return ConcallAnalysisContext(
+            None,
+            False,
+            None,
+            None,
+            None,
         )
-        try:
-            return ConcallAnalysisContext(
-                analysis=self.concall_transcript_service.analyze(discovered.transcript_text),
-                transcript_found=True,
-                transcript_source=discovered.source_url,
-                transcript_date=discovered.transcript_date,
-                discovery_method=discovered.discovery_method,
-            )
-        except Exception as exc:
-            logger.warning("concall_analysis_failed symbol=%s source=%s error=%s", symbol, discovered.source_url, exc)
-            return ConcallAnalysisContext(None, False, discovered.source_url, discovered.transcript_date, discovered.discovery_method)
+
+        # logger.info("concall_transcript_cache_miss symbol=%s", symbol)
+        # try:
+        #     discovered = self.concall_transcript_service.discover_transcript(symbol=symbol, company_name=company_name)
+        # except Exception as exc:
+        #     logger.warning("concall_transcript_discovery_failed symbol=%s error=%s", symbol, exc)
+        #     discovered = None
+
+        # if discovered is None:
+        #     logger.info("concall_transcript_unavailable symbol=%s", symbol)
+        #     return ConcallAnalysisContext(None, False, None, None, None)
+
+        # logger.info(
+        #     "concall_transcript_retrieved symbol=%s source=%s method=%s chars=%s",
+        #     symbol,
+        #     discovered.source_url,
+        #     discovered.discovery_method,
+        #     len(discovered.transcript_text),
+        # )
+        # self.stock_repository.save_transcript_cache(
+        #     stock_id=stock_id,
+        #     source_url=discovered.source_url,
+        #     transcript_text=discovered.transcript_text,
+        #     transcript_date=discovered.transcript_date,
+        #     discovery_method=discovered.discovery_method,
+        # )
+        # try:
+        #     return ConcallAnalysisContext(
+        #         analysis=self.concall_transcript_service.analyze(discovered.transcript_text),
+        #         transcript_found=True,
+        #         transcript_source=discovered.source_url,
+        #         transcript_date=discovered.transcript_date,
+        #         discovery_method=discovered.discovery_method,
+        #     )
+        # except Exception as exc:
+        #     logger.warning("concall_analysis_failed symbol=%s source=%s error=%s", symbol, discovered.source_url, exc)
+        #     return ConcallAnalysisContext(None, False, discovered.source_url, discovered.transcript_date, discovered.discovery_method)
+
 
     @staticmethod
     def _news_domain(result: NewsSentimentResult) -> NewsSentiment:

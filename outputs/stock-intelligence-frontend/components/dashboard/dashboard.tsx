@@ -490,8 +490,8 @@ function NewsPanel({ sentiment, newsItems }: { sentiment: AnalyzeResponse["news_
       </CardHeader>
       <CardContent className="space-y-3">
         {newsItems.length ? (
-          newsItems.map((item) => (
-            <div key={`${item.source}-${item.title}`} className="rounded-md border border-border bg-secondary/20 p-3">
+          newsItems.map((item, index) => (
+            <div key={`${item.source}-${item.title}-${index}`} className="rounded-md border border-border bg-secondary/20 p-3">
               <div className="flex items-center justify-between gap-3">
                 <Badge variant={item.sentiment === "Positive" ? "positive" : item.sentiment === "Negative" ? "negative" : "neutral"}>
                   {item.sentiment}

@@ -1,4 +1,4 @@
-from app.ai.finbert_sentiment import ResilientFinBERTClassifier, SentimentClassifier
+from app.ai.finbert_sentiment import ResilientFinBERTClassifier, SentimentClassifier, get_sentiment_classifier
 from app.domain.news_sentiment import ClassifiedNewsArticle, NewsSentimentResult, SentimentLabel
 from app.infrastructure.news.news_collector import CompositeNewsCollector, NewsCollector
 
@@ -11,7 +11,7 @@ class NewsSentimentService:
         fallback_collector: NewsCollector | None = None,
     ) -> None:
         self.collector = collector or CompositeNewsCollector()
-        self.classifier = classifier or ResilientFinBERTClassifier()
+        self.classifier = classifier or get_sentiment_classifier()
         self.fallback_collector = fallback_collector
 
     def analyze(self, stock_name: str, limit: int = 20) -> NewsSentimentResult:
