@@ -1,6 +1,8 @@
+from dataclasses import replace
 from datetime import date, datetime
 
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -29,65 +31,80 @@ from app.main import app
 
 class StubStockDataProvider:
     def fetch(self, symbol: str) -> StockDataBundle:
+        financials = [
+            FinancialStatementRecord(
+                fiscal_year=2023,
+                revenue=1000,
+                net_profit=100,
+                eps=10,
+                roe=16,
+                roce=20,
+                debt_equity=0.2,
+                interest_coverage=8,
+                operating_cash_flow=110,
+                free_cash_flow=80,
+            ),
+            FinancialStatementRecord(
+                fiscal_year=2024,
+                revenue=1300,
+                net_profit=140,
+                eps=14,
+                roe=18,
+                roce=24,
+                debt_equity=0.1,
+                interest_coverage=10,
+                operating_cash_flow=160,
+                free_cash_flow=120,
+            ),
+        ]
+        valuation = ValuationRecord(
+            as_of_date=date.today(),
+            pe=18,
+            pb=3,
+            peg=0.9,
+            industry_pe=25,
+            price=500,
+            market_cap=50000000000,
+        )
+        shareholding = [
+            ShareholdingRecord(
+                quarter="2023Q4",
+                promoter_holding=55,
+                fii_holding=5,
+                dii_holding=4,
+                retail_holding=36,
+                pledged_shares=0,
+            ),
+            ShareholdingRecord(
+                quarter="2024Q4",
+                promoter_holding=55,
+                fii_holding=6,
+                dii_holding=5,
+                retail_holding=34,
+                pledged_shares=0,
+            ),
+        ]
+
+        if symbol == "GENUSPOWER":
+            shareholding = []
+        if symbol == "RKFORGE":
+            valuation = None
+        if symbol == "JWL":
+            financials = [replace(item, operating_cash_flow=0, free_cash_flow=0) for item in financials]
+        if symbol == "PRAJIND":
+            valuation = replace(valuation, pb=999, peg=999)
+        if symbol == "TARIL":
+            financials = []
+
         return StockDataBundle(
             symbol=symbol,
             yahoo_symbol=f"{symbol}.NS",
             name=f"{symbol} Ltd",
             sector="Capital Goods",
             fetched_at=datetime.utcnow(),
-            financials=[
-                FinancialStatementRecord(
-                    fiscal_year=2023,
-                    revenue=1000,
-                    net_profit=100,
-                    eps=10,
-                    roe=16,
-                    roce=20,
-                    debt_equity=0.2,
-                    interest_coverage=8,
-                    operating_cash_flow=110,
-                    free_cash_flow=80,
-                ),
-                FinancialStatementRecord(
-                    fiscal_year=2024,
-                    revenue=1300,
-                    net_profit=140,
-                    eps=14,
-                    roe=18,
-                    roce=24,
-                    debt_equity=0.1,
-                    interest_coverage=10,
-                    operating_cash_flow=160,
-                    free_cash_flow=120,
-                ),
-            ],
-            valuation=ValuationRecord(
-                as_of_date=date.today(),
-                pe=18,
-                pb=3,
-                peg=0.9,
-                industry_pe=25,
-                price=500,
-                market_cap=50000000000,
-            ),
-            shareholding=[
-                ShareholdingRecord(
-                    quarter="2023Q4",
-                    promoter_holding=55,
-                    fii_holding=5,
-                    dii_holding=4,
-                    retail_holding=36,
-                    pledged_shares=0,
-                ),
-                ShareholdingRecord(
-                    quarter="2024Q4",
-                    promoter_holding=55,
-                    fii_holding=6,
-                    dii_holding=5,
-                    retail_holding=34,
-                    pledged_shares=0,
-                ),
-            ],
+            financials=financials,
+            valuation=valuation,
+            shareholding=shareholding,
             historical_prices=[],
             corporate_actions=[],
             raw_payloads={"yahoo_info": {"marketCap": 50000000000}},
@@ -153,3 +170,27 @@ def test_analyze_reuses_cached_stock_data() -> None:
 
     assert first_response.status_code == 200
     assert second_response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("symbol", "expected_missing_flag"),
+    [
+        ("GENUSPOWER", "Missing shareholding"),
+        ("RKFORGE", "Missing PE"),
+        ("JWL", "Missing cashflow"),
+        ("PRAJIND", "Missing PB"),
+        ("TARIL", "Missing financial statements"),
+    ],
+)
+def test_analyze_partial_market_data_for_valid_nse_symbols(symbol: str, expected_missing_flag: str) -> None:
+    response = client.post("/analyze", json={"stock": symbol})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["symbol"] == symbol
+    assert payload["recommendation"] in {"BUY", "WATCH", "IGNORE"}
+    assert payload["fundamentals"]
+    assert payload["valuation"]
+    assert payload["shareholding_history"]
+    assert payload["risk_flags"]
+    assert expected_missing_flag in {item["label"] for item in payload["risk_flags"]}

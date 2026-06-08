@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
+import logging
 from typing import Any
 
 
 CRORE = 10_000_000
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -73,26 +75,38 @@ class StockDataBundle:
     historical_prices: list[HistoricalPriceRecord]
     corporate_actions: list[CorporateActionRecord]
     raw_payloads: dict[str, Any] = field(default_factory=dict)
+    fetched_fields: list[str] = field(default_factory=list)
+    missing_fields: list[str] = field(default_factory=list)
+    fallback_source: str = "direct_yahoo_nse"
 
     @property
     def is_analyzable(self) -> bool:
-        return bool(self.financials and self.valuation and self.shareholding)
+        return bool(self.financials or self.valuation or self.historical_prices)
+
+
+@dataclass(frozen=True)
+class ResolvedTicker:
+    yahoo_symbol: str
+    source: str
+    ticker: Any
+    info: dict[str, Any]
 
 
 class StockDataProvider:
     """Fetches NSE-listed stock data from Yahoo Finance and NSE India.
-
-    Yahoo Finance is the primary source for fundamentals, valuation, historical
-    prices, and financial statements. NSE India is queried for shareholding and
-    corporate-action payloads when its public endpoints are available.
+    The provider tries multiple symbol resolution paths before giving up:
+    direct Yahoo NSE suffix, NSE autocomplete lookup, Yahoo search, and BSE
+    suffix fallback. Missing PE/PB/shareholding/cash-flow data is represented
+    with neutral/default values so the analysis can still run with explicit
+    missing-field flags instead of failing valid NSE symbols.
     """
 
     def __init__(self, timeout: int = 15) -> None:
         self.timeout = timeout
         import requests
 
-        self._nse_session = requests.Session()
-        self._nse_session.headers.update(
+        self._session = requests.Session()
+        self._session.headers.update(
             {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -105,12 +119,12 @@ class StockDataProvider:
 
     def fetch(self, symbol: str) -> StockDataBundle:
         normalized_symbol = symbol.upper().strip()
-        yahoo_symbol = self._to_yahoo_symbol(normalized_symbol)
         import yfinance as yf
 
-        ticker = yf.Ticker(yahoo_symbol)
+        resolved = self._resolve_yahoo_symbol(normalized_symbol, yf)
+        ticker = resolved.ticker
+        info = resolved.info or self._safe_info(ticker)
 
-        info = self._safe_info(ticker)
         financials = self._build_financials(ticker, info)
         valuation = self._build_valuation(ticker, info)
         historical_prices = self._build_historical_prices(ticker)
@@ -118,10 +132,26 @@ class StockDataProvider:
         nse_corporate_actions_payload = self._fetch_nse_corporate_actions(normalized_symbol)
         shareholding = self._build_shareholding(info, nse_shareholding_payload)
         corporate_actions = self._build_corporate_actions(ticker, nse_corporate_actions_payload)
+        fetched_fields, missing_fields = self._field_status(
+            financials=financials,
+            valuation=valuation,
+            shareholding=shareholding,
+            historical_prices=historical_prices,
+            corporate_actions=corporate_actions,
+        )
+
+        logger.info(
+            "stock_ingestion_completed requested_symbol=%s yahoo_symbol=%s fallback_source=%s fetched_fields=%s missing_fields=%s",
+            normalized_symbol,
+            resolved.yahoo_symbol,
+            resolved.source,
+            ",".join(fetched_fields) or "none",
+            ",".join(missing_fields) or "none",
+        )
 
         return StockDataBundle(
             symbol=normalized_symbol,
-            yahoo_symbol=yahoo_symbol,
+            yahoo_symbol=resolved.yahoo_symbol,
             name=str(info.get("longName") or info.get("shortName") or normalized_symbol),
             sector=str(info.get("sector") or "Unknown"),
             fetched_at=datetime.utcnow(),
@@ -131,40 +161,161 @@ class StockDataProvider:
             historical_prices=historical_prices,
             corporate_actions=corporate_actions,
             raw_payloads={
+                "provider_metadata": {
+                    "requested_symbol": normalized_symbol,
+                    "yahoo_symbol": resolved.yahoo_symbol,
+                    "fallback_source": resolved.source,
+                    "fetched_fields": fetched_fields,
+                    "missing_fields": missing_fields,
+                },
                 "yahoo_info": self._json_safe(info),
                 "nse_shareholding": self._json_safe(nse_shareholding_payload),
                 "nse_corporate_actions": self._json_safe(nse_corporate_actions_payload),
             },
+            fetched_fields=fetched_fields,
+            missing_fields=missing_fields,
+            fallback_source=resolved.source,
+        )
+
+    def _resolve_yahoo_symbol(self, symbol: str, yf: Any) -> ResolvedTicker:
+        candidates: list[tuple[str, str]] = []
+        direct_symbol = self._to_yahoo_symbol(symbol)
+        candidates.append((direct_symbol, "direct_yahoo_nse"))
+
+        for nse_symbol in self._lookup_nse_symbols(symbol):
+            candidates.append((self._to_yahoo_symbol(nse_symbol), "nse_symbol_lookup"))
+
+        for yahoo_symbol in self._search_yahoo_symbols(symbol):
+            source = "yahoo_search_bse" if yahoo_symbol.endswith(".BO") else "yahoo_search"
+            candidates.append((yahoo_symbol, source))
+
+        base_symbol = symbol.rsplit(".", 1)[0]
+        candidates.append((f"{base_symbol}.BO", "bse_fallback"))
+
+        seen: set[str] = set()
+        unique_candidates = []
+        for yahoo_symbol, source in candidates:
+            normalized = yahoo_symbol.upper().strip()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                unique_candidates.append((normalized, source))
+
+        logger.info(
+            "stock_symbol_resolution_started requested_symbol=%s candidates=%s",
+            symbol,
+            ",".join(item[0] for item in unique_candidates),
+        )
+
+        for yahoo_symbol, source in unique_candidates:
+            ticker = yf.Ticker(yahoo_symbol)
+            info = self._safe_info(ticker)
+            if self._has_yahoo_data(ticker, info):
+                logger.info(
+                    "stock_symbol_resolved requested_symbol=%s yahoo_symbol=%s source=%s",
+                    symbol,
+                    yahoo_symbol,
+                    source,
+                )
+                return ResolvedTicker(yahoo_symbol=yahoo_symbol, source=source, ticker=ticker, info=info)
+
+        logger.warning(
+            "stock_symbol_resolution_fallback requested_symbol=%s yahoo_symbol=%s reason=no_candidate_validated",
+            symbol,
+            direct_symbol,
+        )
+        ticker = yf.Ticker(direct_symbol)
+        return ResolvedTicker(
+            yahoo_symbol=direct_symbol,
+            source="direct_yahoo_nse_unvalidated",
+            ticker=ticker,
+            info=self._safe_info(ticker),
         )
 
     @staticmethod
     def _to_yahoo_symbol(symbol: str) -> str:
         return symbol if symbol.endswith((".NS", ".BO")) else f"{symbol}.NS"
 
+    def _lookup_nse_symbols(self, symbol: str) -> list[str]:
+        payload = self._nse_get("https://www.nseindia.com/api/search/autocomplete", {"q": symbol})
+        rows = payload.get("symbols", []) if isinstance(payload, dict) else []
+        matches: list[str] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            candidate = str(row.get("symbol") or row.get("name") or "").upper().strip()
+            if candidate and (candidate == symbol or symbol in candidate):
+                matches.append(candidate)
+        return matches[:5]
+
+    def _search_yahoo_symbols(self, symbol: str) -> list[str]:
+        try:
+            response = self._session.get(
+                "https://query2.finance.yahoo.com/v1/finance/search",
+                params={"q": symbol, "quotesCount": 8, "newsCount": 0},
+                timeout=self.timeout,
+            )
+            if response.status_code >= 400:
+                return []
+            payload = response.json()
+        except Exception as exc:
+            logger.warning("yahoo_search_failed requested_symbol=%s error=%s", symbol, exc)
+            return []
+
+        matches: list[str] = []
+        for row in payload.get("quotes", []):
+            if not isinstance(row, dict):
+                continue
+            yahoo_symbol = str(row.get("symbol") or "").upper().strip()
+            exchange = str(row.get("exchange") or row.get("exchDisp") or "").upper()
+            if yahoo_symbol.endswith((".NS", ".BO")):
+                matches.append(yahoo_symbol)
+            elif "NSE" in exchange:
+                matches.append(f"{yahoo_symbol}.NS")
+            elif "BSE" in exchange:
+                matches.append(f"{yahoo_symbol}.BO")
+        return matches
+
+    def _has_yahoo_data(self, ticker: Any, info: dict[str, Any]) -> bool:
+        if any(
+            info.get(key)
+            for key in ("longName", "shortName", "currentPrice", "regularMarketPrice", "marketCap", "trailingPE")
+        ):
+            return True
+        try:
+            history = ticker.history(period="5d")
+            return not history.empty
+        except Exception:
+            return False
+
     def _safe_info(self, ticker: Any) -> dict[str, Any]:
         try:
             return dict(ticker.info or {})
-        except Exception:
+        except Exception as exc:
+            logger.warning("yahoo_info_fetch_failed ticker=%s error=%s", getattr(ticker, "ticker", "unknown"), exc)
             return {}
 
     def _build_financials(self, ticker: Any, info: dict[str, Any]) -> list[FinancialStatementRecord]:
         try:
             income_stmt = ticker.income_stmt
-        except Exception:
+        except Exception as exc:
+            logger.warning("yahoo_income_statement_fetch_failed error=%s", exc)
             income_stmt = None
         try:
             balance_sheet = ticker.balance_sheet
-        except Exception:
+        except Exception as exc:
+            logger.warning("yahoo_balance_sheet_fetch_failed error=%s", exc)
             balance_sheet = None
         try:
             cashflow = ticker.cashflow
-        except Exception:
+        except Exception as exc:
+            logger.warning("yahoo_cashflow_fetch_failed error=%s", exc)
             cashflow = None
 
         if income_stmt is None or income_stmt.empty:
-            return []
+            return [self._fallback_financial_record(info)]
 
         records: list[FinancialStatementRecord] = []
+        latest_year = max(self._fiscal_year(item) for item in income_stmt.columns)
         for column in income_stmt.columns:
             fiscal_year = self._fiscal_year(column)
             revenue = self._crores(self._first_row_value(income_stmt, column, ["Total Revenue", "Operating Revenue"]))
@@ -193,14 +344,14 @@ class StockDataProvider:
                 free_cash_flow = operating_cash_flow + capital_expenditure
 
             eps = self._first_row_value(income_stmt, column, ["Diluted EPS", "Basic EPS"])
-            if eps == 0 and fiscal_year == max(self._fiscal_year(item) for item in income_stmt.columns):
+            if eps == 0 and fiscal_year == latest_year:
                 eps = self._number(info.get("trailingEps"))
 
             records.append(
                 FinancialStatementRecord(
                     fiscal_year=fiscal_year,
                     revenue=revenue,
-                    net_profit=self._crores(net_profit * CRORE) if abs(net_profit) < 1 and net_profit else net_profit,
+                    net_profit=net_profit,
                     eps=eps,
                     roe=self._ratio(net_profit * CRORE, equity),
                     roce=self._ratio(ebit, capital_employed),
@@ -212,31 +363,50 @@ class StockDataProvider:
             )
 
         deduped = {record.fiscal_year: record for record in records if record.revenue > 0 or record.net_profit != 0}
-        return sorted(deduped.values(), key=lambda item: item.fiscal_year)
+        return sorted(deduped.values(), key=lambda item: item.fiscal_year) or [self._fallback_financial_record(info)]
 
-    def _build_valuation(self, ticker: Any, info: dict[str, Any]) -> ValuationRecord | None:
+    def _fallback_financial_record(self, info: dict[str, Any]) -> FinancialStatementRecord:
+        revenue = self._crores(self._number(info.get("totalRevenue")))
+        net_profit = self._crores(self._number(info.get("netIncomeToCommon")))
+        operating_cash_flow = self._crores(self._number(info.get("operatingCashflow")))
+        free_cash_flow = self._crores(self._number(info.get("freeCashflow")))
+        roe = self._percent(info.get("returnOnEquity"))
+        roce = self._percent(info.get("returnOnCapital")) or roe
+        debt_equity = self._debt_equity(info)
+        return FinancialStatementRecord(
+            fiscal_year=date.today().year,
+            revenue=revenue,
+            net_profit=net_profit,
+            eps=self._number(info.get("trailingEps")),
+            roe=roe,
+            roce=roce,
+            debt_equity=debt_equity,
+            interest_coverage=99,
+            operating_cash_flow=operating_cash_flow,
+            free_cash_flow=free_cash_flow,
+        )
+
+    def _build_valuation(self, ticker: Any, info: dict[str, Any]) -> ValuationRecord:
         price = self._number(info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose"))
         if price == 0:
             try:
                 history = ticker.history(period="5d")
                 if not history.empty:
                     price = float(history["Close"].dropna().iloc[-1])
-            except Exception:
+            except Exception as exc:
+                logger.warning("yahoo_recent_price_fetch_failed error=%s", exc)
                 price = 0
 
-        pe = self._number(info.get("trailingPE") or info.get("forwardPE"))
-        pb = self._number(info.get("priceToBook"))
-        peg = self._number(info.get("trailingPegRatio") or info.get("pegRatio"))
-        industry_pe = self._number(info.get("industryPE")) or (pe * 1.1 if pe else 1)
-
-        if price == 0 and pe == 0 and pb == 0:
-            return None
+        pe = self._number(info.get("trailingPE") or info.get("forwardPE")) or 999
+        pb = self._number(info.get("priceToBook")) or 999
+        peg = self._number(info.get("trailingPegRatio") or info.get("pegRatio")) or 999
+        industry_pe = self._number(info.get("industryPE")) or (pe * 1.1 if pe != 999 else 999)
 
         return ValuationRecord(
             as_of_date=date.today(),
-            pe=pe or 999,
-            pb=pb or 999,
-            peg=peg or 999,
+            pe=pe,
+            pb=pb,
+            peg=peg,
             industry_pe=industry_pe,
             price=price,
             market_cap=self._number(info.get("marketCap")) or None,
@@ -245,7 +415,8 @@ class StockDataProvider:
     def _build_historical_prices(self, ticker: Any) -> list[HistoricalPriceRecord]:
         try:
             history = ticker.history(period="5y", interval="1d", auto_adjust=False)
-        except Exception:
+        except Exception as exc:
+            logger.warning("yahoo_historical_price_fetch_failed error=%s", exc)
             return []
         if history.empty:
             return []
@@ -302,7 +473,8 @@ class StockDataProvider:
 
         try:
             actions = ticker.actions
-        except Exception:
+        except Exception as exc:
+            logger.warning("yahoo_corporate_actions_fetch_failed error=%s", exc)
             return []
         if actions.empty:
             return []
@@ -326,12 +498,14 @@ class StockDataProvider:
 
     def _nse_get(self, url: str, params: dict[str, str]) -> dict[str, Any] | list[Any] | None:
         try:
-            self._nse_session.get("https://www.nseindia.com/", timeout=self.timeout)
-            response = self._nse_session.get(url, params=params, timeout=self.timeout)
+            self._session.get("https://www.nseindia.com/", timeout=self.timeout)
+            response = self._session.get(url, params=params, timeout=self.timeout)
             if response.status_code >= 400:
+                logger.warning("nse_fetch_failed url=%s params=%s status_code=%s", url, params, response.status_code)
                 return None
             return response.json()
-        except Exception:
+        except Exception as exc:
+            logger.warning("nse_fetch_failed url=%s params=%s error=%s", url, params, exc)
             return None
 
     def _parse_nse_shareholding(self, payload: dict[str, Any] | list[Any] | None) -> list[ShareholdingRecord]:
@@ -386,6 +560,73 @@ class StockDataProvider:
             records.append(CorporateActionRecord(action_date, action_type[:64], description))
         return records
 
+    def _field_status(
+        self,
+        financials: list[FinancialStatementRecord],
+        valuation: ValuationRecord | None,
+        shareholding: list[ShareholdingRecord],
+        historical_prices: list[HistoricalPriceRecord],
+        corporate_actions: list[CorporateActionRecord],
+    ) -> tuple[list[str], list[str]]:
+        fetched: list[str] = []
+        missing: list[str] = []
+
+        latest_financial = financials[-1] if financials else None
+        if financials and latest_financial and (latest_financial.revenue or latest_financial.net_profit or latest_financial.eps):
+            fetched.append("financial_statements")
+        else:
+            missing.append("financial_statements")
+
+        if latest_financial and (latest_financial.operating_cash_flow or latest_financial.free_cash_flow):
+            fetched.append("cashflow")
+        else:
+            missing.append("cashflow")
+
+        if valuation is not None:
+            fetched.append("valuation")
+            if valuation.price:
+                fetched.append("price")
+            else:
+                missing.append("price")
+            if valuation.pe != 999:
+                fetched.append("pe")
+            else:
+                missing.append("pe")
+            if valuation.pb != 999:
+                fetched.append("pb")
+            else:
+                missing.append("pb")
+            if valuation.peg != 999:
+                fetched.append("peg")
+            else:
+                missing.append("peg")
+        else:
+            missing.extend(["valuation", "price", "pe", "pb", "peg"])
+
+        if self._has_real_shareholding(shareholding):
+            fetched.append("shareholding")
+        else:
+            missing.append("shareholding")
+
+        if historical_prices:
+            fetched.append("historical_prices")
+        else:
+            missing.append("historical_prices")
+
+        if corporate_actions:
+            fetched.append("corporate_actions")
+        else:
+            missing.append("corporate_actions")
+
+        return fetched, missing
+
+    @staticmethod
+    def _has_real_shareholding(records: list[ShareholdingRecord]) -> bool:
+        return any(
+            item.promoter_holding > 0 or item.fii_holding > 0 or item.dii_holding > 0
+            for item in records
+        )
+
     @staticmethod
     def _fiscal_year(value: Any) -> int:
         if hasattr(value, "year"):
@@ -426,6 +667,20 @@ class StockDataProvider:
             return number
         except (TypeError, ValueError):
             return 0.0
+
+    @staticmethod
+    def _percent(value: Any) -> float:
+        number = StockDataProvider._number(value)
+        return number * 100 if 0 < abs(number) <= 1 else number
+
+    @staticmethod
+    def _debt_equity(info: dict[str, Any]) -> float:
+        total_debt = StockDataProvider._number(info.get("totalDebt"))
+        equity = StockDataProvider._number(info.get("totalStockholderEquity"))
+        if total_debt and equity:
+            return total_debt / equity
+        debt_to_equity = StockDataProvider._number(info.get("debtToEquity"))
+        return debt_to_equity / 100 if debt_to_equity > 10 else debt_to_equity
 
     @staticmethod
     def _crores(value: float) -> float:
