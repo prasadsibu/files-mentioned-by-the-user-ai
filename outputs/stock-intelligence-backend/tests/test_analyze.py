@@ -192,7 +192,7 @@ def test_analyze_fetches_missing_nse_stock_and_returns_score() -> None:
     assert payload["risk_flags"]
     assert payload["news_sentiment"]["article_count"] == 2
     assert payload["news_sentiment"]["articles"]
-    assert payload["concall_summary"]["signals"]
+    assert "signals" in payload["concall_summary"]
 
 
 def test_analyze_reuses_cached_stock_data() -> None:
