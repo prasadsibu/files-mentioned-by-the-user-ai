@@ -19,7 +19,7 @@ export function PriceTrendChart({ data, className = "h-[320px]" }: ChartProps<Fi
       ]}
       layout={{
         title: { text: "Price Trend", font: { size: 13 } },
-        yaxis: { title: "Price (₹)", gridcolor: "#223042" }
+        yaxis: { title: { text: "Price (₹)" }, gridcolor: "#223042" }
       }}
     />
   );

@@ -26,7 +26,7 @@ export function RoeTrendChart({ data, className = "h-[320px]" }: ChartProps<Fina
       ]}
       layout={{
         title: { text: "ROE Trend", font: { size: 13 } },
-        yaxis: { title: "ROE (%)", gridcolor: "#223042" }
+        yaxis: { title: { text: "ROE (%)" }, gridcolor: "#223042" }
       }}
     />
   );

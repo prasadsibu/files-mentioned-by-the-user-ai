@@ -15,7 +15,7 @@ export function ShareholdingTrendChart({ data, className = "h-[320px]" }: ChartP
       ]}
       layout={{
         title: { text: "Shareholding Trend", font: { size: 13 } },
-        yaxis: { title: "Holding (%)", gridcolor: "#223042" }
+        yaxis: { title: { text: "Holding (%)" }, gridcolor: "#223042" }
       }}
     />
   );
