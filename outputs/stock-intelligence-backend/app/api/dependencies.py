@@ -15,6 +15,7 @@ from app.domain.analyzers.risk_analyzer import RiskAnalyzer
 from app.domain.analyzers.valuation_analyzer import ValuationAnalyzer
 from app.domain.recommendation_engine import RecommendationEngine
 from app.infrastructure.database import SessionLocal
+from app.infrastructure.market_data.stock_data_provider import StockDataProvider
 from app.infrastructure.repositories.analysis_repository import AnalysisRepository
 from app.infrastructure.repositories.stock_repository import StockRepository
 
@@ -42,6 +43,7 @@ def get_analysis_service(db: Session = Depends(get_db)) -> AnalysisService:
         concall_analyzer=ConcallAnalyzer(),
         risk_analyzer=RiskAnalyzer(),
         recommendation_engine=RecommendationEngine(),
+        stock_data_provider=StockDataProvider(),
     )
 
 
