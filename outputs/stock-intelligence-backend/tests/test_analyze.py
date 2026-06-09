@@ -94,11 +94,11 @@ class StubStockDataProvider:
         if symbol == "GENUSPOWER":
             shareholding = []
         if symbol == "RKFORGE":
-            valuation = None
+            valuation = replace(valuation, pe=None)
         if symbol == "JWL":
             financials = [replace(item, operating_cash_flow=0, free_cash_flow=0) for item in financials]
         if symbol == "PRAJIND":
-            valuation = replace(valuation, pb=999, peg=999)
+            valuation = replace(valuation, pb=None, peg=None)
         if symbol == "TARIL":
             financials = []
 

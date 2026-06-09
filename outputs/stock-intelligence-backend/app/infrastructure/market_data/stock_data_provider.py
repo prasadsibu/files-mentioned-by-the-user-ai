@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 import logging
 from typing import Any
-
+import time
 
 CRORE = 10_000_000
 logger = logging.getLogger(__name__)
@@ -27,10 +27,10 @@ class FinancialStatementRecord:
 @dataclass(frozen=True)
 class ValuationRecord:
     as_of_date: date
-    pe: float
-    pb: float
-    peg: float
-    industry_pe: float
+    pe: float | None
+    pb: float | None
+    peg: float | None
+    industry_pe: float | None
     price: float
     market_cap: float | None = None
 
@@ -41,7 +41,7 @@ class ShareholdingRecord:
     promoter_holding: float
     fii_holding: float
     dii_holding: float
-    retail_holding: float
+    retail_holding: float | None
     pledged_shares: float
 
 
@@ -119,20 +119,46 @@ class StockDataProvider:
         )
 
     def fetch(self, symbol: str) -> StockDataBundle:
+        total_start = time.perf_counter()
         normalized_symbol = symbol.upper().strip()
         import yfinance as yf
 
+        start = time.perf_counter()
         resolved = self._resolve_yahoo_symbol(normalized_symbol, yf)
+        print(f"resolve_symbol_time={time.perf_counter()-start:.2f}s")
         ticker = resolved.ticker
         info = resolved.info or self._safe_info(ticker)
 
+        start = time.perf_counter()
         financials = self._build_financials(ticker, info)
+        print(f"financials_time={time.perf_counter()-start:.2f}s")
+
+        start = time.perf_counter()
         valuation = self._build_valuation(ticker, info)
+        print(f"valuation_time={time.perf_counter()-start:.2f}s")
+
+        start = time.perf_counter()
         historical_prices = self._build_historical_prices(ticker)
+        print(f"historical_prices_time={time.perf_counter()-start:.2f}s")
+
+        start = time.perf_counter()
         nse_shareholding_payload = self._fetch_nse_shareholding(normalized_symbol)
+        print(f"nse_shareholding_time={time.perf_counter()-start:.2f}s")
+
+        start = time.perf_counter()
         nse_corporate_actions_payload = self._fetch_nse_corporate_actions(normalized_symbol)
+        print(f"nse_corporate_actions_time={time.perf_counter()-start:.2f}s")
+
+        start = time.perf_counter()
         shareholding = self._build_shareholding(info, nse_shareholding_payload)
+        print(f"shareholding_build_time={time.perf_counter()-start:.2f}s")
+
+        start = time.perf_counter()
         corporate_actions = self._build_corporate_actions(ticker, nse_corporate_actions_payload)
+        print(f"corporate_actions_time={time.perf_counter()-start:.2f}s")
+
+        print(f"TOTAL_FETCH_TIME={time.perf_counter()-total_start:.2f}s")
+
         fetched_fields, missing_fields = self._field_status(
             financials=financials,
             valuation=valuation,
@@ -183,8 +209,8 @@ class StockDataProvider:
         direct_symbol = self._to_yahoo_symbol(symbol)
         candidates.append((direct_symbol, "direct_yahoo_nse"))
 
-        for nse_symbol in self._lookup_nse_symbols(symbol):
-            candidates.append((self._to_yahoo_symbol(nse_symbol), "nse_symbol_lookup"))
+        # for nse_symbol in self._lookup_nse_symbols(symbol):
+        #     candidates.append((self._to_yahoo_symbol(nse_symbol), "nse_symbol_lookup"))
 
         for yahoo_symbol in self._search_yahoo_symbols(symbol):
             source = "yahoo_search_bse" if yahoo_symbol.endswith(".BO") else "yahoo_search"
@@ -348,6 +374,15 @@ class StockDataProvider:
             if eps == 0 and fiscal_year == latest_year:
                 eps = self._number(info.get("trailingEps"))
 
+            logger.info(
+                "debt_debug symbol=%s year=%s debt=%s equity=%s debt_equity=%s",
+                info.get("symbol"),
+                fiscal_year,
+                total_debt,
+                equity,
+                self._ratio(total_debt, equity, multiplier=1),
+            )
+
             records.append(
                 FinancialStatementRecord(
                     fiscal_year=fiscal_year,
@@ -398,10 +433,17 @@ class StockDataProvider:
                 logger.warning("yahoo_recent_price_fetch_failed error=%s", exc)
                 price = 0
 
-        pe = self._number(info.get("trailingPE") or info.get("forwardPE")) or 999
-        pb = self._number(info.get("priceToBook")) or 999
-        peg = self._number(info.get("trailingPegRatio") or info.get("pegRatio")) or 999
-        industry_pe = self._number(info.get("industryPE")) or (pe * 1.1 if pe != 999 else 999)
+        pe = self._number(info.get("trailingPE") or info.get("forwardPE"))
+        pb = self._number(info.get("priceToBook"))
+        peg = self._number(info.get("trailingPegRatio") or info.get("pegRatio"))
+
+        pe = pe if pe > 0 else None
+        pb = pb if pb > 0 else None
+        peg = peg if peg > 0 else None
+
+        industry_pe = self._number(info.get("industryPE"))
+        if not industry_pe and pe:
+            industry_pe = round(pe * 1.1, 2)
 
         return ValuationRecord(
             as_of_date=date.today(),
@@ -448,9 +490,9 @@ class StockDataProvider:
 
         promoter = min(max(self._number(info.get("heldPercentInsiders")) * 100, 0), 100)
         institutional = min(max(self._number(info.get("heldPercentInstitutions")) * 100, 0), 100)
-        fii = institutional
+        fii = 0.0
         dii = 0.0
-        retail = max(100 - promoter - fii - dii, 0)
+        retail = max(100 - promoter - institutional, 0)
         quarter = f"{date.today().year}Q{((date.today().month - 1) // 3) + 1}"
         return [
             ShareholdingRecord(
@@ -589,15 +631,17 @@ class StockDataProvider:
                 fetched.append("price")
             else:
                 missing.append("price")
-            if valuation.pe != 999:
+            if valuation.pe is not None:
                 fetched.append("pe")
             else:
                 missing.append("pe")
-            if valuation.pb != 999:
+
+            if valuation.pb is not None:
                 fetched.append("pb")
             else:
                 missing.append("pb")
-            if valuation.peg != 999:
+
+            if valuation.peg is not None:
                 fetched.append("peg")
             else:
                 missing.append("peg")

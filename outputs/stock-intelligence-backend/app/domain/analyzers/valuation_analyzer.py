@@ -9,16 +9,27 @@ class ValuationAnalyzer:
         points = 0
         reasons: list[str] = []
 
-        if valuation.pe < valuation.industry_pe:
+        if (
+            valuation.pe is not None
+            and valuation.industry_pe is not None
+            and valuation.pe < valuation.industry_pe
+        ):
             points += 35
             reasons.append("Current PE is below industry PE.")
-        if valuation.pb <= 4:
+
+        if valuation.pb is not None and valuation.pb <= 4:
             points += 20
             reasons.append("PB ratio is reasonable.")
-        if valuation.peg <= 1:
+
+        if valuation.peg is not None and valuation.peg <= 1:
             points += 30
             reasons.append("PEG is at or below 1.")
-        if latest.roe >= 15 and valuation.pe < valuation.industry_pe:
+        if (
+            latest.roe >= 15
+            and valuation.pe is not None
+            and valuation.industry_pe is not None
+            and valuation.pe < valuation.industry_pe
+        ):
             points += 15
             reasons.append("Quality is strong while valuation is below industry.")
 

@@ -603,9 +603,33 @@ function toValuationMetrics(result: AnalyzeResponse | null): Metric[] {
   const peDiscount = ((valuation.industry_pe - valuation.pe) / Math.max(valuation.industry_pe, 1)) * 100;
   return [
     { label: "Current PE", value: `${formatNumber(valuation.pe)}x`, delta: `vs ${formatNumber(valuation.industry_pe)}x industry`, tone: valuation.pe < valuation.industry_pe ? "positive" : "negative" },
-    { label: "PB", value: `${formatNumber(valuation.pb)}x`, delta: valuation.pb <= 4 ? "reasonable" : "premium", tone: valuation.pb <= 4 ? "positive" : "neutral" },
-    { label: "PEG", value: `${formatNumber(valuation.peg)}x`, delta: valuation.peg <= 1 ? "below 1" : "above 1", tone: valuation.peg <= 1 ? "positive" : "neutral" },
-    { label: "Industry PE", value: `${formatNumber(valuation.industry_pe)}x`, tone: "neutral" },
+    {
+      label: "PB",
+      value: valuation.pb ? `${formatNumber(valuation.pb)}x` : "N/A",
+      delta: valuation.pb
+        ? valuation.pb <= 4
+          ? "reasonable"
+          : "premium"
+        : "unavailable",
+      tone: valuation.pb && valuation.pb <= 4 ? "positive" : "neutral",
+    },
+    {
+      label: "PEG",
+      value: valuation.peg ? `${formatNumber(valuation.peg)}x` : "N/A",
+      delta: valuation.peg
+        ? valuation.peg <= 1
+          ? "below 1"
+          : "above 1"
+        : "unavailable",
+      tone: valuation.peg && valuation.peg <= 1 ? "positive" : "neutral",
+    },
+    {
+      label: "Industry PE",
+      value: valuation.industry_pe
+        ? `${formatNumber(valuation.industry_pe)}x`
+        : "N/A",
+      tone: "neutral",
+    },
     { label: "Price", value: `₹${formatNumber(valuation.price)}`, delta: "latest close", tone: "neutral" },
     { label: "PE Discount", value: formatPercent(peDiscount), delta: "vs industry", tone: peDiscount > 0 ? "positive" : "negative" }
   ];

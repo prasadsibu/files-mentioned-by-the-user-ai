@@ -25,10 +25,10 @@ class FundamentalsResponse(BaseModel):
 
 
 class ValuationResponse(BaseModel):
-    pe: float
-    pb: float
-    peg: float
-    industry_pe: float
+    pe: float | None
+    pb: float | None
+    peg: float | None
+    industry_pe: float | None
     price: float
 
 

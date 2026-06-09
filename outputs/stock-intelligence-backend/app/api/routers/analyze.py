@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, status
+import traceback
 
 from app.api.dependencies import get_analysis_service
 from app.application.schemas.analysis import AnalyzeRequest, AnalyzeResponse
@@ -12,4 +13,8 @@ def analyze_stock(
     request: AnalyzeRequest,
     service: AnalysisService = Depends(get_analysis_service),
 ) -> AnalyzeResponse:
-    return service.analyze(request)
+    try:
+        return service.analyze(request)
+    except Exception:
+        traceback.print_exc()
+        raise

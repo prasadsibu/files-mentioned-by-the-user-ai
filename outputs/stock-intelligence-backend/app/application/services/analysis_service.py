@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import date
 import logging
+import time
 
 from app.application.schemas.analysis import (
     AnalyzeRequest,
@@ -78,6 +79,7 @@ class AnalysisService:
         self.concall_transcript_service = concall_transcript_service or ConcallTranscriptService()
 
     def analyze(self, request: AnalyzeRequest) -> AnalyzeResponse:
+        start = time.perf_counter()
         stock = self.stock_repository.get_by_symbol(request.stock)
         if stock is None:
             stock = self.stock_repository.create_placeholder(request.stock)
@@ -91,7 +93,12 @@ class AnalysisService:
             or not self.stock_repository.is_cache_fresh(stock.id)
         ):
             try:
+                fetch_start = time.perf_counter()
                 fetched_data = self.stock_data_provider.fetch(stock.symbol)
+                print(
+                    f"market_data_fetch_time={time.perf_counter() - fetch_start:.2f}s "
+                    f"symbol={stock.symbol}"
+                )
                 stock = self.stock_repository.save_fetched_data(stock, fetched_data)
                 snapshots = self.stock_repository.get_stock_snapshot(stock.id)
             except Exception as exc:
@@ -130,6 +137,12 @@ class AnalysisService:
         self.analysis_repository.save_result(stock_id=stock.id, result=result)
         news_category = self._category_score(result.breakdown, "news_sentiment")
         concall_category = self._category_score(result.breakdown, "concall_intelligence")
+
+        logger.info(
+            "analysis_total_time=%.2fs symbol=%s",
+            time.perf_counter() - start,
+            stock.symbol,
+        )
 
         return AnalyzeResponse(
             symbol=stock.symbol,
@@ -329,10 +342,35 @@ class AnalysisService:
         missing: list[RiskFlagResponse] = []
         if not financial_history or all(item.revenue == 0 and item.net_profit == 0 and item.eps == 0 for item in financial_history):
             missing.append(RiskFlagResponse(label="Missing financial statements", severity="Medium", detected=True, detail="Yahoo/NSE did not return complete financial statements; available fallback metrics were used."))
-        if valuation.pe >= 999:
-            missing.append(RiskFlagResponse(label="Missing PE", severity="Low", detected=True, detail="PE was not returned; valuation scoring used a conservative neutral value."))
-        if valuation.pb >= 999:
-            missing.append(RiskFlagResponse(label="Missing PB", severity="Low", detected=True, detail="PB was not returned; valuation scoring used a conservative neutral value."))
+
+        if valuation.pe is None:
+            missing.append(
+                RiskFlagResponse(
+                    label="Missing PE",
+                    severity="Low",
+                    detected=True,
+                    detail="PE was not returned by the data source.",
+                )
+            )
+        if valuation.pb is None:
+            missing.append(
+                RiskFlagResponse(
+                    label="Missing PB",
+                    severity="Low",
+                    detected=True,
+                    detail="PB was not returned by the data source.",
+                )
+            )
+
+        if valuation.peg is None:
+            missing.append(
+                RiskFlagResponse(
+                    label="Missing PEG",
+                    severity="Low",
+                    detected=True,
+                    detail="PEG was not returned by the data source.",
+                )
+            )
         if financials.operating_cash_flow == 0 and financials.free_cash_flow == 0:
             missing.append(RiskFlagResponse(label="Missing cashflow", severity="Low", detected=True, detail="Cash-flow values were not returned; zero values were used for cash-flow display and risk checks."))
         if not shareholding_history or (shareholding.promoter_holding == 0 and shareholding.fii_holding == 0 and shareholding.dii_holding == 0):
@@ -400,55 +438,66 @@ class AnalysisService:
             except Exception as exc:
                 logger.warning("concall_cached_analysis_failed symbol=%s error=%s", symbol, exc)
 
-        logger.info(
-            "concall_transcript_auto_discovery_disabled symbol=%s",
-            symbol,
-        )
+        logger.info("concall_transcript_cache_miss symbol=%s", symbol)
 
-        return ConcallAnalysisContext(
-            None,
-            False,
-            None,
-            None,
-            None,
-        )
+        start = time.perf_counter()
 
-        # logger.info("concall_transcript_cache_miss symbol=%s", symbol)
+        try:
+            discovered = self.concall_transcript_service.discover_transcript(
+                symbol=symbol,
+                company_name=company_name,
+            )
+
+            logger.info(
+                "transcript_discovery_time=%.2fs symbol=%s",
+                time.perf_counter() - start,
+                symbol,
+            )
+
+        except Exception as exc:
+            logger.warning(
+                "concall_transcript_discovery_failed symbol=%s error=%s elapsed=%.2fs",
+                symbol,
+                exc,
+                time.perf_counter() - start,
+            )
+            discovered = None
+
         # try:
         #     discovered = self.concall_transcript_service.discover_transcript(symbol=symbol, company_name=company_name)
         # except Exception as exc:
         #     logger.warning("concall_transcript_discovery_failed symbol=%s error=%s", symbol, exc)
         #     discovered = None
 
-        # if discovered is None:
-        #     logger.info("concall_transcript_unavailable symbol=%s", symbol)
-        #     return ConcallAnalysisContext(None, False, None, None, None)
+        if discovered is None:
+            logger.info("concall_transcript_unavailable symbol=%s", symbol)
+            return ConcallAnalysisContext(None, False, None, None, None)
 
-        # logger.info(
-        #     "concall_transcript_retrieved symbol=%s source=%s method=%s chars=%s",
-        #     symbol,
-        #     discovered.source_url,
-        #     discovered.discovery_method,
-        #     len(discovered.transcript_text),
-        # )
-        # self.stock_repository.save_transcript_cache(
-        #     stock_id=stock_id,
-        #     source_url=discovered.source_url,
-        #     transcript_text=discovered.transcript_text,
-        #     transcript_date=discovered.transcript_date,
-        #     discovery_method=discovered.discovery_method,
-        # )
-        # try:
-        #     return ConcallAnalysisContext(
-        #         analysis=self.concall_transcript_service.analyze(discovered.transcript_text),
-        #         transcript_found=True,
-        #         transcript_source=discovered.source_url,
-        #         transcript_date=discovered.transcript_date,
-        #         discovery_method=discovered.discovery_method,
-        #     )
-        # except Exception as exc:
-        #     logger.warning("concall_analysis_failed symbol=%s source=%s error=%s", symbol, discovered.source_url, exc)
-        #     return ConcallAnalysisContext(None, False, discovered.source_url, discovered.transcript_date, discovered.discovery_method)
+        logger.info(
+            "concall_transcript_retrieved symbol=%s source=%s method=%s chars=%s",
+            symbol,
+            discovered.source_url,
+            discovered.discovery_method,
+            len(discovered.transcript_text),
+        )
+        self.stock_repository.save_transcript_cache(
+            stock_id=stock_id,
+            source_url=discovered.source_url,
+            transcript_text=discovered.transcript_text,
+            transcript_date=discovered.transcript_date,
+            discovery_method=discovered.discovery_method,
+        )
+        try:
+            return ConcallAnalysisContext(
+                analysis=self.concall_transcript_service.analyze(discovered.transcript_text),
+                transcript_found=True,
+                transcript_source=discovered.source_url,
+                transcript_date=discovered.transcript_date,
+                discovery_method=discovered.discovery_method,
+            )
+        except Exception as exc:
+            logger.warning("concall_analysis_failed symbol=%s source=%s error=%s", symbol, discovered.source_url, exc)
+            return ConcallAnalysisContext(None, False, discovered.source_url, discovered.transcript_date, discovered.discovery_method)
 
 
     @staticmethod

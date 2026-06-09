@@ -19,6 +19,9 @@ def create_app() -> FastAPI:
     Base.metadata.create_all(bind=engine)
     app = FastAPI(title=settings.app_name, version="1.0.0")
 
+    logger.info("CORS origins = %s", settings.cors_origins)
+    print("CORS origins =", settings.cors_origins)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
