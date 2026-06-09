@@ -102,7 +102,7 @@ class StockDataProvider:
     missing-field flags instead of failing valid NSE symbols.
     """
 
-    def __init__(self, timeout: int = 15) -> None:
+    def __init__(self, timeout: int = 5) -> None:
         self.timeout = timeout
         import requests
 
@@ -138,7 +138,8 @@ class StockDataProvider:
         print(f"valuation_time={time.perf_counter()-start:.2f}s")
 
         start = time.perf_counter()
-        historical_prices = self._build_historical_prices(ticker)
+        historical_prices = []
+        # historical_prices = self._build_historical_prices(ticker)
         print(f"historical_prices_time={time.perf_counter()-start:.2f}s")
 
         start = time.perf_counter()
@@ -146,7 +147,8 @@ class StockDataProvider:
         print(f"nse_shareholding_time={time.perf_counter()-start:.2f}s")
 
         start = time.perf_counter()
-        nse_corporate_actions_payload = self._fetch_nse_corporate_actions(normalized_symbol)
+        nse_corporate_actions_payload = None
+        # nse_corporate_actions_payload = self._fetch_nse_corporate_actions(normalized_symbol)
         print(f"nse_corporate_actions_time={time.perf_counter()-start:.2f}s")
 
         start = time.perf_counter()
@@ -457,7 +459,7 @@ class StockDataProvider:
 
     def _build_historical_prices(self, ticker: Any) -> list[HistoricalPriceRecord]:
         try:
-            history = ticker.history(period="5y", interval="1d", auto_adjust=False)
+            history = ticker.history(period="1y", interval="1d", auto_adjust=False)
         except Exception as exc:
             logger.warning("yahoo_historical_price_fetch_failed error=%s", exc)
             return []
@@ -534,14 +536,16 @@ class StockDataProvider:
         return records
 
     def _fetch_nse_shareholding(self, symbol: str) -> dict[str, Any] | list[Any] | None:
-        return self._nse_get("https://www.nseindia.com/api/corporate-share-holdings", {"index": "equities", "symbol": symbol})
+        return None
 
     def _fetch_nse_corporate_actions(self, symbol: str) -> dict[str, Any] | list[Any] | None:
         return self._nse_get("https://www.nseindia.com/api/corporates-corporateActions", {"index": "equities", "symbol": symbol})
 
     def _nse_get(self, url: str, params: dict[str, str]) -> dict[str, Any] | list[Any] | None:
         try:
-            self._session.get("https://www.nseindia.com/", timeout=self.timeout)
+            if not hasattr(self, "_nse_initialized"):
+                self._session.get("https://www.nseindia.com/", timeout=3)
+                self._nse_initialized = True
             response = self._session.get(url, params=params, timeout=self.timeout)
             if response.status_code >= 400:
                 logger.warning("nse_fetch_failed url=%s params=%s status_code=%s", url, params, response.status_code)

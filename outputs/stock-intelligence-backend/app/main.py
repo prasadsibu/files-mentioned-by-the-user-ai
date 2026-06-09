@@ -1,6 +1,7 @@
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Request
 
 from app.api.exception_handlers import register_exception_handlers
 from app.api.routers.analyze import router as analyze_router
@@ -39,7 +40,10 @@ def create_app() -> FastAPI:
     async def startup_event() -> None:
         """Initialize FinBERT model at application startup."""
         logger.info("Starting up application")
-        initialize_finbert_classifier()
+        try:
+            initialize_finbert_classifier()
+        except Exception as exc:
+            logger.warning("FinBERT init failed: %s", exc)
         logger.info("Application startup complete")
 
     @app.get("/health", tags=["system"])

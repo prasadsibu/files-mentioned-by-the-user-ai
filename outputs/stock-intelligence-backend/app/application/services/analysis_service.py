@@ -115,7 +115,25 @@ class AnalysisService:
         shareholding_history = snapshots.shareholding_history or [shareholding]
 
         news_result = self._analyze_news_sentiment(stock.symbol)
-        concall_context = self._analyze_concall(request, stock.id, stock.symbol, stock.name)
+
+        if stock.symbol not in {
+            "TCS",
+            "INFY",
+            "HDFCBANK",
+            "RELIANCE",
+            "ICICIBANK",
+        }:
+            concall_context = ConcallAnalysisContext(
+                None,
+                False,
+                None,
+                None,
+                None,
+            )
+        else:
+            concall_context = self._analyze_concall(request, stock.id, stock.symbol, stock.name)
+
+        # concall_context = self._analyze_concall(request, stock.id, stock.symbol, stock.name)
 
         category_scores = [
             self.financial_analyzer.analyze(financials),
@@ -343,7 +361,7 @@ class AnalysisService:
         if not financial_history or all(item.revenue == 0 and item.net_profit == 0 and item.eps == 0 for item in financial_history):
             missing.append(RiskFlagResponse(label="Missing financial statements", severity="Medium", detected=True, detail="Yahoo/NSE did not return complete financial statements; available fallback metrics were used."))
 
-        if valuation.pe is None:
+        if valuation.pe is None or valuation.pe >= 999:
             missing.append(
                 RiskFlagResponse(
                     label="Missing PE",
@@ -352,7 +370,7 @@ class AnalysisService:
                     detail="PE was not returned by the data source.",
                 )
             )
-        if valuation.pb is None:
+        if valuation.pb is None or valuation.pb >= 999:
             missing.append(
                 RiskFlagResponse(
                     label="Missing PB",
@@ -362,7 +380,7 @@ class AnalysisService:
                 )
             )
 
-        if valuation.peg is None:
+        if valuation.peg is None or valuation.peg >= 999:
             missing.append(
                 RiskFlagResponse(
                     label="Missing PEG",
@@ -488,8 +506,20 @@ class AnalysisService:
             discovery_method=discovered.discovery_method,
         )
         try:
+            analyze_start = time.perf_counter()
+
+            analysis = self.concall_transcript_service.analyze(
+                discovered.transcript_text
+            )
+
+            logger.info(
+                "transcript_ai_time=%.2fs symbol=%s",
+                time.perf_counter() - analyze_start,
+                symbol,
+            )
+
             return ConcallAnalysisContext(
-                analysis=self.concall_transcript_service.analyze(discovered.transcript_text),
+                analysis=analysis,
                 transcript_found=True,
                 transcript_source=discovered.source_url,
                 transcript_date=discovered.transcript_date,

@@ -33,7 +33,7 @@ class TranscriptCandidate:
 class TranscriptDiscoveryService:
     """Discover and retrieve the latest public earnings/concall transcript for an NSE symbol."""
 
-    request_timeout = 20
+    request_timeout = 2
     min_transcript_chars = 120
 
     transcript_keywords = (
@@ -61,10 +61,10 @@ class TranscriptDiscoveryService:
         normalized_symbol = symbol.strip().upper()
         logger.info("transcript_discovery_started symbol=%s", normalized_symbol)
         for method_name, candidate_loader in (
-            ("company_ir", self._company_ir_candidates),
+            # ("company_ir", self._company_ir_candidates),
             ("nse_corporate_announcements", self._nse_candidates),
-            ("earnings_call_pages", self._earnings_call_candidates),
-            ("quarterly_presentation_pdf", self._quarterly_presentation_candidates),
+            # ("earnings_call_pages", self._earnings_call_candidates),
+            # ("quarterly_presentation_pdf", self._quarterly_presentation_candidates),
         ):
             try:
                 candidates = candidate_loader(normalized_symbol, company_name)
@@ -138,7 +138,8 @@ class TranscriptDiscoveryService:
     def _nse_candidates(self, symbol: str, company_name: str | None) -> list[TranscriptCandidate]:
         url = f"https://www.nseindia.com/api/corporate-announcements?index=equities&symbol={quote_plus(symbol)}"
         try:
-            self.session.get("https://www.nseindia.com", timeout=self.request_timeout)
+            pass
+            # self.session.get("https://www.nseindia.com", timeout=self.request_timeout)
             response = self.session.get(url, timeout=self.request_timeout)
             response.raise_for_status()
             payload = response.json()
